@@ -46,18 +46,6 @@ make install
 uninstall binary
 ```bash
 make uninstall
-```
-```bash
-# Clone the repository
-git clone https://github.com/6z7y/tomu.git
-cd tomu
-
-# install binary
-make install
-
-# uninstall binary
-make uninstall
-```
 
 ## Usage
 
