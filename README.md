@@ -52,7 +52,7 @@ make uninstall
 
 ### Basic Playback
 ```bash
-./tomu /path/to/audio.mp3
+tomu /path/to/audio.mp3
 ```
 
 ## How It Works
