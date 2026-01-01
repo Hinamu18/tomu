@@ -176,8 +176,8 @@ void *decoder_place(void *arg){
     );
   #else
     swr_alloc_set_opts2(&swrCTX,
-      inf->ch_layout, inf->sample_fmt, inf->sample_rate,
-      inf->ch_layout, codecCTX->sample_fmt, inf->sample_rate,
+      &inf->ch_layout, inf->sample_fmt, inf->sample_rate,
+      &inf->ch_layout, codecCTX->sample_fmt, inf->sample_rate,
       0, NULL
     );
   #endif
