@@ -165,22 +165,16 @@ void *decoder_place(void *arg){
   AudioInfo *inf = streamCTX->inf;
 
   #ifdef LEGACY_LIBSWRSAMPLE
-    swrCTX = swr_alloc_set_opts(swrCTX,
+    swr_alloc_set_opts(swrCTX,
       inf->ch_layout, inf->sample_fmt, inf->sample_rate,
       inf->ch_layout, codecCTX->sample_fmt, inf->sample_rate,
       0, NULL
     );
   #else
-    AVChannelLayout out_layout, in_layout;
-    av_channel_layout_default(&out_layout, inf->ch);
-    av_channel_layout_default(&in_layout, inf->ch);
-
-    if (swr_alloc_set_opts2(&swrCTX,
-       &out_layout, inf->sample_fmt, inf->sample_rate,
-       &in_layout, codecCTX->sample_fmt, inf->sample_rate,
-       0, NULL) < 0) {
-       swrCTX = NULL; 
-    }
+    swr_alloc_set_opts2(&swrCTX,
+       inf->ch_layout, inf->sample_fmt, inf->sample_rate,
+       inf->ch_layout, codecCTX->sample_fmt, inf->sample_rate,
+    );
   #endif
 
   if (!swrCTX || swr_init(swrCTX) < 0 ){
@@ -342,7 +336,10 @@ int scan_now(const char *filename){
   #ifdef LEGACY_LIBSWRSAMPLE
     inf.ch_layout = codecCTX->channel_layout;
   #else
-    inf.ch_layout = 0; 
+    AVChannelLayout ch_layout;
+      
+    av_channel_layout_default(&ch_layout, &inf.ch);
+    inf.ch_layout = ch_layout; 
   #endif
 
   inf.sample_rate = codecCTX->sample_rate;
