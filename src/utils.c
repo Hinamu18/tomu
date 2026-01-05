@@ -54,6 +54,6 @@ void die(const char *fmt, ...)
 	va_start(ap, fmt);
 	verr(fmt, ap);
 	va_end(ap);
-	exit(1);
+	exit(-1);
 }
 
