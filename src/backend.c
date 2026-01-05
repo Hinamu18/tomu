@@ -1,5 +1,6 @@
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/log.h>
 #include <libswresample/swresample.h>
 #include <libavutil/avutil.h>
 #include <libswresample/version.h>
@@ -48,8 +49,7 @@ ma_format get_ma_format(enum AVSampleFormat value){
   }
 }
 
-// TODO: fix typo
-AudioBuffer *audio_buffer_crate(int capacity){
+AudioBuffer *audio_buffer_init(int capacity){
   AudioBuffer *buf = malloc(sizeof(AudioBuffer));
   buf->PCM_data = malloc(capacity);
   buf->capacity = capacity;
@@ -127,9 +127,6 @@ void *decoder_place(void *arg){
   AudioInfo *inf = streamCTX->inf;
   PlayBackState *state = streamCTX->state;
 
-  // init settings of swr swr convert
-  // SWR here for convert if planar format to interleaved format
-  // or skip is already interleaved format
   #ifdef LEGACY_LIBSWRSAMPLE
     swrCTX = swr_alloc_set_opts(swrCTX,
       inf->ch_layout, inf->sample_fmt, inf->sample_rate, // output
@@ -144,12 +141,9 @@ void *decoder_place(void *arg){
     );
   #endif
 
-  if (!swrCTX || swr_init(swrCTX) < 0 ){
+  if (!swrCTX || swr_init(swrCTX) < 0 )
     swr_free(&swrCTX);
-  }
 
-  // packet is like compressed data
-  // frame for decoded as PCM samples
   AVPacket *packet = av_packet_alloc();
   AVFrame *frame = av_frame_alloc();
 
@@ -178,9 +172,10 @@ void *decoder_place(void *arg){
       while (avcodec_receive_frame(codecCTX, frame) >= 0){
         // init duration
         double current_time = (double)total_samples_played / inf->sample_rate;
-        printf("\r  %d:%02d:%02d / %d:%02d:%02d",
+        printf("\r  %d:%02d:%02d / %d:%02d:%02d | vol: %.0f%%.",
           get_hour(current_time), get_min(current_time), get_sec(current_time), 
-          get_hour(duration_time), get_min(duration_time), get_sec(duration_time)
+          get_hour(duration_time), get_min(duration_time), get_sec(duration_time),
+          state->volume * 100
         );
         fflush(stdout);
         total_samples_played += frame->nb_samples;
@@ -223,8 +218,6 @@ void *decoder_place(void *arg){
     if (!state->running) break;
   }
 
-  // playback_stop(state);
-
   if (swrCTX ) swr_free(&swrCTX);
   av_frame_free(&frame);
   av_packet_free(&packet);
@@ -235,6 +228,7 @@ void *decoder_place(void *arg){
 void ma_dataCallback(ma_device *ma_config, void *output, const void *input, ma_uint32 frameCount){
   StreamContext *streamCTX = (StreamContext*)ma_config->pUserData;
   AudioInfo *inf = streamCTX->inf;
+  PlayBackState *state = streamCTX->state;
 
   // check if paused audio
   pthread_mutex_lock(&streamCTX->state->lock);
@@ -247,6 +241,10 @@ void ma_dataCallback(ma_device *ma_config, void *output, const void *input, ma_u
   // see how much bytes needed speaker to work
   int bytes = frameCount * inf->ch * inf->sample_fmt_bytes;
   audio_buffer_read(streamCTX->buf, output, bytes);
+
+  if (state->volume != 1.00f)
+    ma_apply_volume_factor_pcm_frames(output, frameCount, inf->ma_fmt, inf->ch, state->volume);
+
 }
 
 // init mini audio config before used
@@ -272,7 +270,7 @@ void stream_audio(StreamContext *streamCTX){
 
   // init a buffer size = 500ms
   int capacity = (inf->sample_rate) * (inf->ch) * (inf->sample_fmt_bytes) * 0.5;
-  streamCTX->buf = audio_buffer_crate(capacity);
+  streamCTX->buf = audio_buffer_init(capacity);
 
   // init miniaudio engine (for send samples PCM to speaker)
   ma_device device;
@@ -315,6 +313,8 @@ void stream_audio(StreamContext *streamCTX){
 int playback_run(const char *filename){
   AVFormatContext *fmtCTX = NULL;
   AVCodecContext *codecCTX = NULL;
+
+  av_log_set_level(AV_LOG_QUIET);
 
   if (avformat_open_input(&fmtCTX, filename, NULL, NULL) < 0 )
 	die("file: file type is not supported");
@@ -372,7 +372,8 @@ int playback_run(const char *filename){
   // setup PlaybackState
   PlayBackState state = {
     .running = 1,
-    .paused = 0
+    .paused = 0,
+    .volume = 1.00f
   };
   pthread_mutex_init(&state.lock, NULL);
   pthread_cond_init(&state.waitKudasai, NULL);
@@ -383,8 +384,8 @@ int playback_run(const char *filename){
       .ch = codecCTX->channels,
       .ch_layout = codecCTX->channel_layout,
     #else
-      .ch = codecCTX->ch_layout.nb_channels;
-      .ch_layout = codecCTX->ch_layout;
+      .ch = codecCTX->ch_layout.nb_channels,
+      .ch_layout = codecCTX->ch_layout,
     #endif
 
     .audioStream = audioStream,
@@ -403,7 +404,7 @@ int playback_run(const char *filename){
   };
 
   printf("Playing: %s\n",  filename);
-  printf("%dHz, %dch, %s", inf.sample_rate, inf.ch, av_get_sample_fmt_name(inf.sample_fmt));
+  printf("%dHz, %dch, %s\n", inf.sample_rate, inf.ch, av_get_sample_fmt_name(inf.sample_fmt));
 
   // here we make everything inside this function
   // is handle everything for play audio

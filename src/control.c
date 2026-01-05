@@ -20,10 +20,10 @@ void help(){
     "Usage: tomu [COMMAND] [PATH]\n"
     " Commands:\n\n"
 
-    "   loop            : loop same sound\n"
-    "   shuffle-loop    : select random file audio and loop\n"
-    "   version         : show version of program\n"
-    "   help            : show help message\n"
+    "   --loop            : loop same sound\n"
+    "   --shuffle-loop    : select random file audio and loop\n"
+    "   --version         : show version of program\n"
+    "   --help            : show help message\n"
 
     "\nkeys:\n"
     " Space = pause/resume\n"
@@ -63,31 +63,43 @@ void *control_place(void *arg){
     if (ret > 0 && (pfd.revents & POLLIN)) {
       int n = read(STDIN_FILENO, &c, 1);
       if (n > 0 ){
+
         if (c == 'q'){
           playback_stop(state);
           break;
+        }
 
-        } else if (c == ' '){
-          if (state->paused) {
+        else if (c == ' '){
+          if (state->paused)
             playback_resume(state);
-          } else {
+          else 
             playback_pause(state);
+        }
+
+        else if (c == 27) { // ESC
+          char seq[2];
+
+          // arrows key
+          if (read(STDIN_FILENO, &seq, 2) == 2){
+            if (seq[0] == '['){
+              if (seq[1] == 'A') volume_increase(state); // UP 
+              if (seq[1] == 'B') volume_decrease(state); // Down
+              // if (seq[1] == 'D'); // Left
+              // if (seq[1] == 'C'); // Right
+            }
           }
         }
       }
+    }
 
-    } else if (ret == 0) {
+    else if (ret == 0) 
       continue;
 
-    } else {
+    else 
       perror("[W] poll error");
-    }
-      // printf("\ni here\n");
-      // printf(".");
-      // fflush(stdout);
   }
 
-  printf("\033[?25h"); // show cursor
+  printf("\033[?25h\r"); // show cursor
   fflush(stdout);
 
   tcsetattr(STDIN_FILENO, TCSANOW, &old);
@@ -112,6 +124,20 @@ void playback_stop(PlayBackState *state){
   state->paused = 0;
   state->running = 0;
   pthread_cond_broadcast(&state->waitKudasai);
+  pthread_mutex_unlock(&state->lock);
+}
+
+void volume_increase(PlayBackState *state){
+  pthread_mutex_lock(&state->lock);
+  state->volume += 0.02f;
+  if (state->volume > 1.25f) state->volume = 1.25f;
+  pthread_mutex_unlock(&state->lock);
+}
+
+void volume_decrease(PlayBackState *state){
+  pthread_mutex_lock(&state->lock);
+  state->volume -= 0.02f;
+  if (state->volume < 0.00f) state->volume = 0.00f;
   pthread_mutex_unlock(&state->lock);
 }
 

@@ -15,6 +15,7 @@
 typedef struct {
   int running;
   int paused;
+  float volume;
   pthread_mutex_t lock;
   pthread_cond_t waitKudasai;
 

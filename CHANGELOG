@@ -1,0 +1,4 @@
+## 0.0.6_dirty - 2026-01-05
+- Volume control for playback
+- Improved playback control logic
+- ignore ffmpeg log
