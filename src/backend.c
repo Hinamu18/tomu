@@ -119,7 +119,7 @@ void audio_buffer_read(AudioBuffer *buf, uint8_t *output, int bytes_read){
   pthread_mutex_unlock(&buf->lock);
 }
 
-void *decoder_place(void *arg){
+void *run_decoder(void *arg){
   StreamContext *streamCTX = (StreamContext*)arg;
   AVFormatContext *fmtCTX = streamCTX->fmtCTX;
   AVCodecContext * codecCTX = streamCTX->codecCTX;
@@ -224,13 +224,13 @@ void *decoder_place(void *arg){
   return NULL;
 }
   
-// miniaudio will see this function everytime for need read (PCM samples)
+// miniaudio will use this function everytime for reading PCM samples
 void ma_dataCallback(ma_device *ma_config, void *output, const void *input, ma_uint32 frameCount){
   StreamContext *streamCTX = (StreamContext*)ma_config->pUserData;
   AudioInfo *inf = streamCTX->inf;
   PlayBackState *state = streamCTX->state;
 
-  // check if paused audio
+  // check if audio is paused
   pthread_mutex_lock(&streamCTX->state->lock);
 
   while (streamCTX->state->paused)
@@ -238,7 +238,7 @@ void ma_dataCallback(ma_device *ma_config, void *output, const void *input, ma_u
 
   pthread_mutex_unlock(&streamCTX->state->lock);
 
-  // see how much bytes needed speaker to work
+  // see how much bytes needed by speaker to work
   int bytes = frameCount * inf->ch * inf->sample_fmt_bytes;
   audio_buffer_read(streamCTX->buf, output, bytes);
 
@@ -260,6 +260,7 @@ ma_device_config init_miniaudioConfig(AudioInfo *inf, StreamContext *streamCTX){
   return ma_config;
 }
 
+// this function is responsible of running workers and starting playback
 void stream_audio(StreamContext *streamCTX){
   AudioInfo *inf = streamCTX->inf;
   PlayBackState *state = streamCTX->state;
@@ -272,7 +273,7 @@ void stream_audio(StreamContext *streamCTX){
   int capacity = (inf->sample_rate) * (inf->ch) * (inf->sample_fmt_bytes) * 0.5;
   streamCTX->buf = audio_buffer_init(capacity);
 
-  // init miniaudio engine (for send samples PCM to speaker)
+  // init miniaudio engine (for sending PCM samples to speaker)
   ma_device device;
   ma_device_config ma_config = init_miniaudioConfig(inf, streamCTX);
 
@@ -284,12 +285,12 @@ void stream_audio(StreamContext *streamCTX){
     return;
   }
 
-  // exec threads 3 workers
-  pthread_create(&control_thread, NULL, control_place, streamCTX->state);
+  // exec 3 worker threads
+  pthread_create(&control_thread, NULL, handle_input, streamCTX->state);
   pthread_create(&sock_thread, NULL, run_socket, streamCTX->state);
-  pthread_create(&decoder_thread, NULL, decoder_place, streamCTX);
+  pthread_create(&decoder_thread, NULL, run_decoder, streamCTX);
   
-  // start session send to speaker (wait to end samples)
+  // start device and wait till there's not more samples to play
   ma_device_start(&device);
   pthread_join(decoder_thread, NULL);
 
@@ -299,7 +300,8 @@ void stream_audio(StreamContext *streamCTX){
   // pthread_join(control_thread, NULL);
   // pthread_join(sock_thread, NULL);
 
-  // audio is end now must off all thing
+  // audio is end now must off all thing (I'll keep this it's funny)
+  // cleanup after playback finishes
   ma_device_stop(&device);
   ma_device_uninit(&device);
   audio_buffer_destroy(streamCTX->buf);
@@ -406,8 +408,7 @@ int playback_run(const char *filename){
   printf("Playing: %s\n",  filename);
   printf("%dHz, %dch, %s\n", inf.sample_rate, inf.ch, av_get_sample_fmt_name(inf.sample_fmt));
 
-  // here we make everything inside this function
-  // is handle everything for play audio
+  // play audio
   stream_audio(&streamCTX);
 
   cleanUP(fmtCTX, codecCTX);
