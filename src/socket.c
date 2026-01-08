@@ -16,6 +16,7 @@ void cleanup_socket(int sig){
 }
 
 // TODO: change the fn name 
+// TODO: abstract input reading from "control.c" to be used in here as well since we have code duplication
 void *run_socket(void *arg)
 {
 	PlayBackState *state = (PlayBackState*)arg;
@@ -23,8 +24,8 @@ void *run_socket(void *arg)
 	signal(SIGTERM, cleanup_socket);
 	signal(SIGINT, cleanup_socket);
 
-	struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
+	struct sockaddr_un addr = {0}; // why zero mem at runtime????
+    // memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strcpy(addr.sun_path, SOCKET_PATH);
 	
@@ -39,20 +40,17 @@ void *run_socket(void *arg)
 	if (listen(sock, 10) < 0)
 		warn("Listen","failed: %s", strerror(errno));
 
+    char buf[256]; // less stack movement
 	while (1) {
 		int client = accept(sock, NULL, NULL);
 		if (client < 0) continue;
 
-		char buf[256];
 		int n;
 		while ((n = recv(client, buf, sizeof(buf)-1, 0)) > 0) {
 			buf[n] = '\0';
 			if (!strncmp(buf, "q", 1)) die("");
 			if (!strncmp(buf, " ", 1)){
-				if (state->paused)
-					playback_resume(state);
-				else
-					playback_pause(state);
+                playback_toggle(state);
 			}
 		}
 		close(client);

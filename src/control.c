@@ -21,7 +21,7 @@ void help(){
     " Commands:\n\n"
 
     "   --loop            : loop same sound\n"
-    "   --shuffle-loop    : select random file audio and loop\n"
+    "   --shuffle-loop    : select random audio file and loop\n"
     "   --version         : show version of program\n"
     "   --help            : show help message\n"
 
@@ -33,13 +33,25 @@ void help(){
   );
 }
 
-// TODO: not complete yet & have some bugs
-// function for handle keys
-void *control_place(void *arg){
+struct keybinding { const char *key; void (*handler)(PlayBackState*); };
+
+#define CTRL_KEY(key) (const char[]){key - 'a' + 1 , '\0'} // remove this when you move the code to socket function
+
+static const struct keybinding keybindings[] = {
+    {" "     ,       playback_toggle},
+    {"q"     ,       playback_stop},
+    {"\x1b[A",       volume_increase}, // Up
+    {"\x1b[B",     	 volume_decrease}, // Down
+};
+
+static const int kbds_len = sizeof(keybindings) / sizeof(struct keybinding);
+
+// For interactive player
+// TODO: not complete yet & have some bugs (fine for testing)
+void *handle_input(void *arg){
   PlayBackState *state = (PlayBackState*)arg;
 
   struct termios old, raw;
-  char c;
 
   tcgetattr(STDIN_FILENO, &old);
   raw = old;
@@ -51,45 +63,42 @@ void *control_place(void *arg){
   printf("\033[?25l"); // hide cursor
   fflush(stdout);
 
-  while (state->running){
-    struct pollfd pfd = {
-      .fd = STDIN_FILENO,
-      .events = POLLIN
-    };
+  struct pollfd pfd = {
+    .fd = STDIN_FILENO,
+    .events = POLLIN
+  };
 
+  while (state->running){
     // wait 100ms for input
     int ret = poll(&pfd, 1, 100);
 
     if (ret > 0 && (pfd.revents & POLLIN)) {
-      int n = read(STDIN_FILENO, &c, 1);
-      if (n > 0 ){
+        char key_buf[4] = {0}; // for escape sequences
 
-        if (c == 'q'){
-          playback_stop(state);
-          break;
+        // key press
+        int n = read(STDIN_FILENO, key_buf, 1);
+        // n shouldn't be zero since we polled successfully
+        if (n < 0) { perror("read"); break; }; 
+
+        // check if we have an escape sequence and ready bytes.
+        if (key_buf[0] == '\x1b') {
+            // TODO: remove the magic number
+            int ret = poll(&pfd, 1, 0); // we're not sure of the sequence's size and we don't want to block
+
+            if (ret < 0) {
+                perror("poll ecsape sequence");
+                break;
+            } // fuck off on errors
+            if (ret == 1 && (pfd.revents & POLLIN)) read(STDIN_FILENO, key_buf + 1, sizeof(key_buf) - 1); // read into key_buf[1] and forward
         }
 
-        else if (c == ' '){
-          if (state->paused)
-            playback_resume(state);
-          else 
-            playback_pause(state);
+        // now we just find the proper keybinding..
+        // a hashmap should be used here but allocating mem here is overkill
+        for (uint i = 0; i < kbds_len; i++) {
+            if (strcmp(key_buf, keybindings[i].key) == 0) keybindings[i].handler(state); 
         }
 
-        else if (c == 27) { // ESC
-          char seq[2];
-
-          // arrows key
-          if (read(STDIN_FILENO, &seq, 2) == 2){
-            if (seq[0] == '['){
-              if (seq[1] == 'A') volume_increase(state); // UP 
-              if (seq[1] == 'B') volume_decrease(state); // Down
-              // if (seq[1] == 'D'); // Left
-              // if (seq[1] == 'C'); // Right
-            }
-          }
-        }
-      }
+        if (!state->running) break; // leave if nothing is playing
     }
 
     else if (ret == 0) 
@@ -106,17 +115,11 @@ void *control_place(void *arg){
   return NULL;
 }
 
-void playback_pause(PlayBackState *state){
-  pthread_mutex_lock(&state->lock);
-  state->paused = 1;
-  pthread_mutex_unlock(&state->lock);
-}
-
-void playback_resume(PlayBackState *state){
-  pthread_mutex_lock(&state->lock);
-  state->paused = 0;
-  pthread_cond_broadcast(&state->waitKudasai);
-  pthread_mutex_unlock(&state->lock);
+void playback_toggle(PlayBackState *state) {
+    if (state->paused)
+        playback_resume(state);
+    else 
+        playback_pause(state);
 }
 
 void playback_stop(PlayBackState *state){
@@ -143,13 +146,14 @@ void volume_decrease(PlayBackState *state){
 
 void path_handle(const char *path){
 	struct stat st;
-	if (stat(path, &st)<0 )  goto defer;
-	if (S_ISDIR(st.st_mode)) shuffle(path);
-	if (S_ISREG(st.st_mode)) playback_run(path);
-	else goto defer;
+	if (stat(path, &st)<0 )  goto free;
+
+    if (S_ISDIR(st.st_mode)) shuffle(path);
+    else if (S_ISREG(st.st_mode)) playback_run(path);
+    else goto free;
 
 	return;
-defer:
+free:
 	die("FILE: %s",strerror(errno));
 }
 
@@ -159,7 +163,7 @@ void shuffle(const char *path){
   int count = 0;
   srand(time(NULL));
 
-  if (!dir ) goto defer;
+  if (!dir ) goto free;
   
   while ((entry = readdir(dir)) != NULL ){
     if (strcmp(".", entry->d_name) == 0 || strcmp("..", entry->d_name) == 0) 
@@ -167,7 +171,7 @@ void shuffle(const char *path){
     count++;
   }
 
-  if (count == 0) goto defer;
+  if (count == 0) goto free;
 
   int index_rand = rand() % count;
   rewinddir(dir);
@@ -184,7 +188,12 @@ void shuffle(const char *path){
     i++;
   }
 
-defer:
+  // find a better control flow.. you're running the die function on end.
+  // also who the fuck uses two space indentation? it should be four!!!!
+  closedir(dir); 
+  return;
+
+free:
   closedir(dir);
   die("FILE: %s",strerror(errno));
 }
