@@ -32,6 +32,6 @@ uninstall:
 	sudo rm -f $(addprefix $(INSTALL_PATH)/,$(BINS))
 
 clean:
-	rm -f $(BINS)
+	rm -rf $(BINS) $(BUILD_DIR)
 
 .PHONY: all install uninstall clean

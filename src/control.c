@@ -35,9 +35,7 @@ void help(){
 
 struct keybinding { const char *key; void (*handler)(PlayBackState*); };
 
-#define CTRL_KEY(key) (const char[]){key - 'a' + 1 , '\0'}
-#define IS_CHAR(c) (c < 127 && c > 31)
-#define BACKSPACE (const char[]){ 127 , '\0' }
+#define CTRL_KEY(key) (const char[]){key - 'a' + 1 , '\0'} // remove this when you move the code to socket function
 
 static const struct keybinding keybindings[] = {
     {" "     ,       playback_toggle},
@@ -49,13 +47,11 @@ static const struct keybinding keybindings[] = {
 static const int kbds_len = sizeof(keybindings) / sizeof(struct keybinding);
 
 // For interactive player
-// TODO: not complete yet & have some bugs
-// TODO: use a struct to save keybindings for easier scaling
+// TODO: not complete yet & have some bugs (fine for testing)
 void *handle_input(void *arg){
   PlayBackState *state = (PlayBackState*)arg;
 
   struct termios old, raw;
-  char key_buf[4] = {0}; // for escape sequences
 
   tcgetattr(STDIN_FILENO, &old);
   raw = old;
@@ -77,6 +73,7 @@ void *handle_input(void *arg){
     int ret = poll(&pfd, 1, 100);
 
     if (ret > 0 && (pfd.revents & POLLIN)) {
+        char key_buf[4] = {0}; // for escape sequences
 
         // key press
         int n = read(STDIN_FILENO, key_buf, 1);
@@ -86,7 +83,7 @@ void *handle_input(void *arg){
         // check if we have an escape sequence and ready bytes.
         if (key_buf[0] == '\x1b') {
             // TODO: remove the magic number
-            int ret = poll(&pfd, 1, 40); // we're not sure of the sequence's size and we don't want to block
+            int ret = poll(&pfd, 1, 0); // we're not sure of the sequence's size and we don't want to block
 
             if (ret < 0) {
                 perror("poll ecsape sequence");
@@ -98,11 +95,10 @@ void *handle_input(void *arg){
         // now we just find the proper keybinding..
         // a hashmap should be used here but allocating mem here is overkill
         for (uint i = 0; i < kbds_len; i++) {
-            // a state struct should probably be used but meh
             if (strcmp(key_buf, keybindings[i].key) == 0) keybindings[i].handler(state); 
         }
 
-        if (!state->running) break;
+        if (!state->running) break; // leave if nothing is playing
     }
 
     else if (ret == 0) 
@@ -151,9 +147,10 @@ void volume_decrease(PlayBackState *state){
 void path_handle(const char *path){
 	struct stat st;
 	if (stat(path, &st)<0 )  goto free;
-	if (S_ISDIR(st.st_mode)) shuffle(path);
-	if (S_ISREG(st.st_mode)) playback_run(path);
-	else goto free;
+
+    if (S_ISDIR(st.st_mode)) shuffle(path);
+    else if (S_ISREG(st.st_mode)) playback_run(path);
+    else goto free;
 
 	return;
 free:
