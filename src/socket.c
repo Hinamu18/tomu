@@ -1,9 +1,11 @@
 #include <errno.h>
 #include <signal.h>
 #include <string.h>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <poll.h>
 
 #include "socket.h"
 #include "backend.h"
@@ -37,24 +39,43 @@ void *run_socket(void *arg)
 	if (bind(sock, (struct sockaddr*)&addr , sizeof(addr)) < 0)
 		warn("Bind","failed: %s", strerror(errno));
 
-	if (listen(sock, 10) < 0)
+	if (listen(sock, 10) < 0) {
 		warn("Listen","failed: %s", strerror(errno));
+  }
 
-    char buf[256]; // less stack movement
+  struct pollfd pfd = {
+    .fd = sock,
+    .events = POLLIN
+  };
+
+  char buf[256]; // less stack movement
 	while (1) {
-		int client = accept(sock, NULL, NULL);
-		if (client < 0) continue;
+    int ret = poll(&pfd, 1, 80);
+    
+    if (!state->running) break;
 
-		int n;
-		while ((n = recv(client, buf, sizeof(buf)-1, 0)) > 0) {
-			buf[n] = '\0';
-			if (!strncmp(buf, "q", 1)) die("");
-			if (!strncmp(buf, " ", 1)){
-                playback_toggle(state);
-			}
-		}
-		close(client);
-	}
+    if (ret > 0 && (pfd.revents & POLLIN)) {
+      int client = accept(sock, NULL, NULL);
+      if (client < 0) continue;
+
+      int n;
+      while ((n = recv(client, buf, sizeof(buf)-1, 0)) > 0) {
+        buf[n] = '\0';
+        if (!strncmp(buf, "q", 1)) die("");
+        if (!strncmp(buf, " ", 1)){
+          playback_toggle(state);
+        }
+      }
+      close(client);
+    }
+    else if (ret == 0)
+      continue;
+
+    else 
+      perror("[F] poll error");
+    }
+
 	close(sock);
-	cleanup_socket(0);
+
+  return NULL;
 }
