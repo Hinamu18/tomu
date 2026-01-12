@@ -3,6 +3,7 @@
 - Rebuild source code structure
 - Organize steps in playback_run()
 - Fix memory leaks
+- add support for reading audio metadata
 - Add progress display
 ## 0.0.7_dirty - 2026-01-10
 - fixing the argument parsing first
