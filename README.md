@@ -86,7 +86,7 @@ tomu /path/to/audio.mp3
 
 Tomu uses a sophisticated multi-threaded architecture for smooth audio playback:
 
-![Architecture Diagram](docs/architecture.png)
+![Architecture Diagram](docs/diagram.png)
 
 **i made this tool for learn c and need music player less usage ram for i make many session this will take usage ram.**
 ``
