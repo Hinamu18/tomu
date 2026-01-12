@@ -5,7 +5,7 @@
 #include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
 #include <libswresample/swresample.h>
-#include "libs/miniaudio.h"
+#include "../libs/miniaudio.h"
 
 #if LIBSWRESAMPLE_VERSION_MAJOR <= 3
   #define LEGACY_LIBSWRSAMPLE
@@ -31,7 +31,7 @@ typedef struct {
   pthread_cond_t data_ready;   // Signal when data available
   pthread_cond_t space_free;   // Signal when space available
 
-} AudioBuffer;
+} Audio_Buffer;
 
 // struct for base information of audio file (codec)
 typedef struct {
@@ -47,13 +47,13 @@ typedef struct {
   int sample_fmt_bytes;
   ma_format ma_fmt;
 
-} AudioInfo;
+} Audio_Info;
 
 
 // struct for point context used in another functions (needed)
 typedef struct {
-  AudioBuffer *buf;
-  AudioInfo *inf;
+  Audio_Buffer *buf;
+  Audio_Info *inf;
   AVFormatContext *fmtCTX;
   AVCodecContext *codecCTX;
   PlayBackState *state;
