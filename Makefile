@@ -5,7 +5,7 @@ LIBS = -lavformat -lavcodec -lavutil -lswresample -lm -lpthread
 INSTALL_PATH = /usr/bin
 
 # Server: ALL source files needed
-SERVER_SRC = src/main.c src/backend.c src/control.c src/socket.c src/utils.c
+SERVER_SRC = src/main.c src/backend.c src/backend_utils.c src/control.c src/socket.c src/utils.c
 SERVER_BIN = tomu
 
 BINS = $(SERVER_BIN)
