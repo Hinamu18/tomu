@@ -20,7 +20,6 @@ void help(){
     " Commands:\n\n"
 
     "   --loop            : loop same sound\n"
-    "   --shuffle-loop    : select random audio file and loop\n"
     "   --version         : show version of program\n"
     "   --help            : show help message\n"
 
