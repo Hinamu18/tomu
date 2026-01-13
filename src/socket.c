@@ -41,41 +41,42 @@ void *run_socket(void *arg)
 
 	if (listen(sock, 10) < 0) {
 		warn("Listen","failed: %s", strerror(errno));
-  }
-
-  struct pollfd pfd = {
-    .fd = sock,
-    .events = POLLIN
-  };
-
-  char buf[256]; // less stack movement
-	while (1) {
-    int ret = poll(&pfd, 1, 80);
-    
-    if (!state->running) break;
-
-    if (ret > 0 && (pfd.revents & POLLIN)) {
-      int client = accept(sock, NULL, NULL);
-      if (client < 0) continue;
-
-      int n;
-      while ((n = recv(client, buf, sizeof(buf)-1, 0)) > 0) {
-        buf[n] = '\0';
-        if (!strncmp(buf, "q", 1)) die("");
-        if (!strncmp(buf, " ", 1)){
-          playback_toggle(state);
-        }
-      }
-      close(client);
     }
-    else if (ret == 0)
-      continue;
 
-    else 
-      perror("[F] poll error");
+    struct pollfd pfd = {
+        .fd = sock,
+        .events = POLLIN
+    };
+
+    char buf[256]; // less stack movement
+    // stop messing indentation!!!!!
+	while (1) {
+        int ret = poll(&pfd, 1, 80);
+        
+        if (!state->running) break;
+
+        if (ret > 0 && (pfd.revents & POLLIN)) {
+          int client = accept(sock, NULL, NULL);
+          if (client < 0) continue;
+
+          int n;
+          while ((n = recv(client, buf, sizeof(buf)-1, 0)) > 0) {
+            buf[n] = '\0';
+            if (!strncmp(buf, "q", 1)) die("");
+            if (!strncmp(buf, " ", 1)){
+                playback_toggle(state);
+            }
+          }
+          close(client);
+        }
+        else if (ret == 0)
+          continue;
+
+        else 
+          perror("[F] poll error");
     }
 
 	close(sock);
 
-  return NULL;
+    return NULL;
 }

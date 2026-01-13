@@ -15,7 +15,6 @@
 #include "socket.h"
 #include "utils.h"
 
-#define MINIAUDIO_IMPLEMENTATION
 #include "../libs/miniaudio.h"
 
 #if LIBSWRESAMPLE_VERSION_MAJOR <= 3
@@ -50,7 +49,7 @@ void audio_buffer_write(Audio_Buffer *buf, uint8_t *audio_data, int data_must_wr
   pthread_mutex_unlock(&buf->lock);
 }
 
-// READ AUDIO DATA FROM BUFFER To speaker
+// READ AUDIO DATA FROM BUFFER TO SPEAKER
 void audio_buffer_read(Audio_Buffer *buf, uint8_t *output, int bytes_needed)
 {
   pthread_mutex_lock(&buf->lock);
@@ -113,7 +112,7 @@ void *run_decoder(void *arg)
   AVFrame *frame = av_frame_alloc();
 
   if (!packet || !frame ){
-    printf("something happend when init packet or frame!\n");
+    printf("something happend during packet or frame init!\n");
     if (swrCTX ) swr_free(&swrCTX);
     return NULL;
   }
@@ -121,18 +120,18 @@ void *run_decoder(void *arg)
   int64_t total_samples_played = 0;
   int duration_time = fmtCTX->duration / 1000000.0;
 
-
+decode:
   // first we read the data from container format (.mp3, .opus, .flac, ...etc)
   while (av_read_frame(fmtCTX, packet) >= 0){
 
     // we need only audio stream
     if (packet->stream_index == inf->audioStream ){
 
-      // sent packet to frame decoder
+      // send packet to frame decoder
       if (avcodec_send_packet(codecCTX, packet) < 0 )
         continue;
 
-      // frame take it as PCM samples (for used to miniaudio send to speaker for a played)
+      // frame recieves it as PCM samples (used by miniaudio for playback)
       while (avcodec_receive_frame(codecCTX, frame) >= 0){
         // init duration progress
         double current_time = (double)total_samples_played / inf->sample_rate;
@@ -151,14 +150,14 @@ void *run_decoder(void *arg)
 
           uint8_t *data[1] = {data_conv};
 
-          // start convert the samples
+          // start converting the samples
           int samples = swr_convert(swrCTX,
             data, frame->nb_samples, // output
             (const uint8_t**)frame->data, frame->nb_samples // input
           );
 
           if (samples > 0 ){
-            // get how much bytes write from this (PCM samples)
+            // get how much bytes to write from this (PCM samples)
             int bytes = samples * inf->ch * inf->sample_fmt_bytes;
             // write in buffer
             audio_buffer_write(streamCTX->buf, data[0], bytes);
@@ -167,7 +166,7 @@ void *run_decoder(void *arg)
 
           // run this if: already interleaved
         } else {
-          // get how much bytes write from this (PCM samples)
+          // get how much bytes to write from this (PCM samples)
           int bytes = frame->nb_samples * inf->ch * inf->sample_fmt_bytes;
           // write in buffer
           audio_buffer_write(streamCTX->buf, frame->data[0], bytes);
@@ -188,16 +187,24 @@ void *run_decoder(void *arg)
     if (!state->running) break;
   }
 
+    if (state->looping && state->running) { // if we're looping, restart again..
+        av_seek_frame(fmtCTX, -1, 0, AVSEEK_FLAG_BACKWARD);
+        avcodec_flush_buffers(codecCTX);
+        total_samples_played = 0;
+        goto decode; // find another way, labels aren't good for readability
+    }
+
   printf("\n");
 
   // IMPORTANT: Signal all waiting threads before exiting
+  // Note that other threads are implemented to exit once state.running is false so...
   pthread_mutex_lock(&state->lock);
   state->running = 0;  // Ensure running is 0
   pthread_cond_broadcast(&state->wait_cond);
   pthread_mutex_unlock(&state->lock);
   
   // clean
-  if (swrCTX ) swr_free(&swrCTX);
+  if (swrCTX) swr_free(&swrCTX);
   av_frame_free(&frame);
   av_packet_free(&packet);
 
@@ -205,7 +212,7 @@ void *run_decoder(void *arg)
   return NULL;
 }
   
-// miniaudio will use this function everytime for reading PCM samples
+// miniaudio will use this callback to read PCM samples
 void ma_dataCallback(ma_device *ma_config, void *output, const void *input, ma_uint32 frameCount)
 {
   StreamContext *streamCTX = (StreamContext*)ma_config->pUserData;
@@ -230,7 +237,7 @@ void ma_dataCallback(ma_device *ma_config, void *output, const void *input, ma_u
   }
 }
 
-// init mini audio config before used
+// init miniaudio config before using
 ma_device_config init_miniaudioConfig(Audio_Info *inf, StreamContext *streamCTX)
 {
   ma_device_config ma_config = ma_device_config_init(ma_device_type_playback);
@@ -244,7 +251,7 @@ ma_device_config init_miniaudioConfig(Audio_Info *inf, StreamContext *streamCTX)
   return ma_config;
 }
 
-// so this function do Read
+// reads the file and creates a Stream Context
 void get_audio_info(const char *filename, StreamContext *streamCTX)
 {
   Audio_Info *inf = streamCTX->inf;
@@ -287,7 +294,7 @@ void get_audio_info(const char *filename, StreamContext *streamCTX)
   //   Channel 1: [R R R R R R]
   // 
   // Speakers need INTERLEAVED format! We must convert PLANAR to INTERLEAVED.
-  // here not mean is converted now, not yet (later)
+  // The decoder will take care of converting sample formats
   enum AVSampleFormat input_sample_fmt = streamCTX->codecCTX->sample_fmt;
   enum AVSampleFormat output_sample_fmt = input_sample_fmt;
   
@@ -311,8 +318,8 @@ void get_audio_info(const char *filename, StreamContext *streamCTX)
   inf->ma_fmt = get_ma_format(output_sample_fmt);
 }
 
-// fn handle all thing (logic walk)
-int playback_run(const char *filename)
+// this handles playing audio files.
+int playback_run(const char *filename, uint loop)
 {
   Audio_Info inf = {0};
   Audio_Buffer *buf = NULL;
@@ -327,11 +334,9 @@ int playback_run(const char *filename)
 
   av_log_set_level(AV_LOG_QUIET); // ignore warning
 
-  // 1. get file info
+  // create StreamContext from file.
   get_audio_info(filename, &streamCTX);
-
-  // init Playback
-  init_playbackstatus(&state);
+  init_playbackstatus(&state, loop);
 
   // init threads
   pthread_t control_thread;
@@ -342,7 +347,7 @@ int playback_run(const char *filename)
   int capacity = (inf.sample_rate) * (inf.ch) * (inf.sample_fmt_bytes) * 0.5;
   streamCTX.buf = audio_buffer_init(capacity);
 
-  // init miniaudio engine (for sending PCM samples to speaker)
+  // init miniaudio device (for sending PCM samples to speaker)
   ma_device device;
   ma_device_config ma_config = init_miniaudioConfig(&inf, &streamCTX);
 
@@ -362,20 +367,18 @@ int playback_run(const char *filename)
   printf("%.2dHz, %dch, %s\n", inf.sample_rate, inf.ch, av_get_sample_fmt_name(inf.sample_fmt));
 
   // start threads
-  // 2. begin decoder
-  // with stdin & socket control
-  pthread_create(&control_thread, NULL, handle_input, &state);
-  pthread_create(&sock_thread, NULL, run_socket, &state);
-  pthread_create(&decoder_thread, NULL, run_decoder, &streamCTX);
+  pthread_create(&control_thread, NULL, handle_input, &state); // terminal controls
+  pthread_create(&sock_thread, NULL, run_socket, &state); // socket controls
+  pthread_create(&decoder_thread, NULL, run_decoder, &streamCTX); // decoder ._.
   
   // start mini audio and wait decoder write to end
   ma_device_start(&device);
-  pthread_join(decoder_thread, NULL);
 
+  // wait for all threads to finish.. (if only we could allow the main thread to have coffee during this..)
+  pthread_join(decoder_thread, NULL);
   pthread_join(control_thread, NULL);
   pthread_join(sock_thread, NULL);
 
-  // END
   // clean up
   ma_device_stop(&device);
   ma_device_uninit(&device);

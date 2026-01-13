@@ -16,7 +16,7 @@ int get_stream(AVFormatContext *fmtCTX, int type, int value);
 Audio_Buffer *audio_buffer_init(int capacity);
 void audio_buffer_destroy(Audio_Buffer *buf);
 
-void init_playbackstatus(PlayBackState *state);
+void init_playbackstatus(PlayBackState *state, uint loop);
 
 void print_metadata(AVDictionary *metadata);
 void progress(PlayBackState *state, double current_time, int duration_time);
