@@ -18,12 +18,8 @@ int main(int argc, char *argv[])
   const char *filename = argv[argc - 1];
 
   if (argv[1][0] == '-' && argv[1][1] == '-') {
-
     if (strcmp("--loop", arg) == 0)
-      while (1) handle_input(&filename);
-
-    else if (strcmp("--shuffle-loop", arg) == 0)
-      while (1) shuffle(filename);
+      path_handle(filename, true);
 
     else if (strcmp("--help", arg) == 0)
       help();
@@ -33,8 +29,7 @@ int main(int argc, char *argv[])
 
     else 
       printf("[T] Unknown Arg '%s'\n", arg);
-  }
+  } else path_handle(filename, false);
 
-  path_handle(filename);
   return 0;
 }

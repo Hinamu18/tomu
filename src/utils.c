@@ -13,14 +13,14 @@ void cleanUP(AVFormatContext *fmtCTX, AVCodecContext *codecCTX){
   if (codecCTX ) avcodec_free_context(&codecCTX);
 }
 
-void path_handle(const char *path)
+void path_handle(const char *path, uint loop)
 {
   struct stat st;
 
   if (stat(path, &st) < 0 ) goto bad_path;
 
-    if (S_ISDIR(st.st_mode)) shuffle(path);
-    else if (S_ISREG(st.st_mode)) playback_run(path);
+    if (S_ISDIR(st.st_mode)) shuffle(path, loop);
+    else if (S_ISREG(st.st_mode)) playback_run(path, loop);
     else goto bad_path;
 
   return;

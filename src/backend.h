@@ -16,6 +16,7 @@ typedef struct {
   int running;
   int paused;
   float volume;
+  uint looping;
   pthread_mutex_t lock;
   pthread_cond_t wait_cond;
 
@@ -60,6 +61,6 @@ typedef struct {
 
 } StreamContext;
 
-int playback_run(const char *filename);
+int playback_run(const char *filename, uint loop);
 
 #endif

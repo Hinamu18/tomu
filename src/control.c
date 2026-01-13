@@ -20,7 +20,6 @@ void help(){
     " Commands:\n\n"
 
     "   --loop            : loop same sound\n"
-    "   --shuffle-loop    : select random audio file and loop\n"
     "   --version         : show version of program\n"
     "   --help            : show help message\n"
 
@@ -102,7 +101,7 @@ void *handle_input(void *arg){
 
         }
 
-        if (!state->running) break; // leave if end or quit
+        if (!state->running) break; // leave if there's nothing playing
     }
 
     else if (ret == 0) {
@@ -171,7 +170,7 @@ inline void volume_decrease(PlayBackState *state){
 }
 // ===================================================================
 
-void shuffle(const char *path){
+void shuffle(const char *path, uint loop){
   DIR *dir = opendir(path);
   struct dirent *entry;
   int count = 0;
@@ -197,7 +196,7 @@ void shuffle(const char *path){
     if (i == index_rand){
       char filename[512];
       snprintf(filename, sizeof(filename), "%s/%s", path, entry->d_name);
-      playback_run(filename);
+      playback_run(filename, loop);
       break;
     }
     i++;

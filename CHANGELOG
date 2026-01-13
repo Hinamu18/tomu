@@ -14,3 +14,8 @@
 - Volume control for playback
 - Improved playback control logic
 - ignore ffmpeg log
+## A: Yuki 0.0.8_1_dirty - 2026-01-13
+- Fixed playback looping
+- Remove shuffle-loop flag
+- Fixed slight term output glitches
+- Optimized the Makefile

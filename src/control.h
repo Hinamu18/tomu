@@ -12,6 +12,6 @@ void playback_toggle(PlayBackState *state);
 void playback_stop(PlayBackState *state);
 void volume_increase(PlayBackState *state);
 void volume_decrease(PlayBackState *state);
-void shuffle(const char *path);
+void shuffle(const char *path, uint loop);
 
 #endif

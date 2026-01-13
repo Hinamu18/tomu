@@ -74,11 +74,12 @@ void audio_buffer_destroy(Audio_Buffer *buf)
   }
 }
 
-void init_playbackstatus(PlayBackState *state)
+void init_playbackstatus(PlayBackState *state, uint loop)
 {
   state->running = 1;
   state->paused = 0;
   state->volume = 1.00f;
+  state->looping = loop;
 
   pthread_mutex_init(&state->lock, NULL);
   pthread_cond_init(&state->wait_cond, NULL);
@@ -98,6 +99,7 @@ void progress(PlayBackState *state, double current_time, int duration_time)
   int bar_width = 30;
 
   int pos = (current_time / duration_time) * bar_width;
+  printf("\033[2K"); // clear the line before writing, if this causes flickering, do it manually (using spaces)
   printf("\r[");
   for (int i = 0; i < bar_width; i++){
 
