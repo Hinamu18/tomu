@@ -24,10 +24,12 @@ void help(){
     "   --help            : show help message\n"
 
     "\nkeys:\n"
-    " Space = pause/resume\n"
-    " q = quit\n"
-    " ↑ = increase volume\n"
-    " ↓ = decrease volume\n"
+    " (Space) = pause/resume\n"
+    " (q) = quit\n"
+    " (-) = decrease volume\n"
+    " (+) = increase volume\n"
+    " (↑/→) = audio seek forward +5s/1m\n"
+    " (←/↓) = audio seek backward -5s/1m\n"
 
     "\nExample: tomu loop [FILE.mp3]\n"
   );
@@ -40,14 +42,17 @@ struct keybinding { const char *key; void (*handler)(PlayBackState*); };
 static const struct keybinding keybindings[] = {
     {" "     ,       playback_toggle},
     {"q"     ,       playback_stop},
-    {"\x1b[A",       volume_increase}, // Up
-    {"\x1b[B",     	 volume_decrease}, // Down
+    {"-"     ,       volume_decrease},
+    {"+"     ,       volume_increase},
+    {"\x1b[A",       seek_forward_min}, // Up arrow
+    {"\x1b[B",     	 seek_backward_min}, // Down arrow
+    {"\x1b[D",       seek_backward_sec},   // Left arrow
+    {"\x1b[C",       seek_forward_sec},    // Right arrow
 };
 
 static const int kbds_len = sizeof(keybindings) / sizeof(struct keybinding);
 
 // For interactive player
-// TODO: not complete yet & have some bugs (fine for testing)
 void *handle_input(void *arg){
   PlayBackState *state = (PlayBackState*)arg;
 
@@ -128,14 +133,12 @@ inline void playback_toggle(PlayBackState *state) {
         playback_pause(state);
 }
 
-// use playback_toggle unless you have a good reason to use this
 inline void playback_pause(PlayBackState *state){
   pthread_mutex_lock(&state->lock);
     state->paused = 1;
   pthread_mutex_unlock(&state->lock);
 }
 
-// use playback_toggle unless you have a good reason to use this
 inline void playback_resume(PlayBackState *state){
   pthread_mutex_lock(&state->lock);
     state->paused = 0;
@@ -143,6 +146,7 @@ inline void playback_resume(PlayBackState *state){
   pthread_mutex_unlock(&state->lock);
 }
 
+// Stops playback and wakes any waiting threads
 inline void playback_stop(PlayBackState *state){
   pthread_mutex_lock(&state->lock);
     state->paused = 0;
@@ -150,6 +154,56 @@ inline void playback_stop(PlayBackState *state){
     pthread_cond_broadcast(&state->wait_cond);
   pthread_mutex_unlock(&state->lock);
 }
+
+// Requests a seek forward by 5 seconds
+void seek_forward_sec(PlayBackState *state)
+{
+  pthread_mutex_lock(&state->lock);
+    if (!state->seek_request){
+      state->seek_request = 1;
+      state->seek_target = +5000000; // +5 sec in microseconds
+      pthread_cond_broadcast(&state->wait_cond);
+    }
+  pthread_mutex_unlock(&state->lock);
+}
+
+
+// Requests a seek forward by 1 min
+void seek_forward_min(PlayBackState *state)
+{
+  pthread_mutex_lock(&state->lock);
+    if (!state->seek_request){
+      state->seek_request = 1;
+      state->seek_target = +60000000; // +60 sec in microseconds
+      pthread_cond_broadcast(&state->wait_cond);
+    }
+  pthread_mutex_unlock(&state->lock);
+}
+
+// Requests a seek backward by 5 seconds
+void seek_backward_sec(PlayBackState *state)
+{
+  pthread_mutex_lock(&state->lock);
+    if (!state->seek_request){
+      state->seek_request = 1;
+      state->seek_target = -5000000; // -5 sec in microseconds
+      pthread_cond_broadcast(&state->wait_cond);
+    }
+  pthread_mutex_unlock(&state->lock);
+}
+
+// Requests a seek backward by 1 min
+void seek_backward_min(PlayBackState *state)
+{
+  pthread_mutex_lock(&state->lock);
+    if (!state->seek_request){
+      state->seek_request = 1;
+      state->seek_target = -60000000; // -60 sec in microseconds
+      pthread_cond_broadcast(&state->wait_cond);
+    }
+  pthread_mutex_unlock(&state->lock);
+}
+
 // =================================================================
 
 
@@ -190,7 +244,7 @@ void shuffle(const char *path, uint loop){
   int index_rand = rand() % count;
   rewinddir(dir);
 
-  for (int i = 0; i <= index_rand;){
+  for (int i = 0; i <= index_rand; i++){
     entry = readdir(dir);
     if (strcmp(".", entry->d_name) == 0 || strcmp("..", entry->d_name) == 0) continue;
     if (i == index_rand){
@@ -199,11 +253,9 @@ void shuffle(const char *path, uint loop){
       playback_run(filename, loop);
       break;
     }
-    i++;
   }
 
   // find a better control flow.. you're running the die function on end.
-  // also who the fuck uses two space indentation? it should be four!!!!
   closedir(dir); 
   return;
 
