@@ -17,6 +17,8 @@ typedef struct {
   int paused;
   float volume;
   uint looping;
+  int seek_request; // Flag: 1 = seek needed
+  int64_t seek_target; // Where seek to (in microseconds)
   pthread_mutex_t lock;
   pthread_cond_t wait_cond;
 
@@ -36,7 +38,8 @@ typedef struct {
 
 // struct for base information of audio file (codec)
 typedef struct {
-  int audioStream;
+  int audioStream_index;
+  AVStream *audioStream;
   int ch;
   #ifdef LEGACY_LIBSWRSAMPLE
     int ch_layout;

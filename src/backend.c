@@ -1,3 +1,4 @@
+#include <libavcodec/packet.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libswresample/swresample.h>
@@ -20,6 +21,7 @@
 #if LIBSWRESAMPLE_VERSION_MAJOR <= 3
   #define LEGACY_LIBSWRSAMPLE
 #endif
+
 
 // WRITE AUDIO DATA TO BUFFER
 void audio_buffer_write(Audio_Buffer *buf, uint8_t *audio_data, int data_must_write)
@@ -82,30 +84,19 @@ void audio_buffer_read(Audio_Buffer *buf, uint8_t *output, int bytes_needed)
   pthread_mutex_unlock(&buf->lock);
 }
 
+// decoder thread
 void *run_decoder(void *arg)
 {
   StreamContext *streamCTX = (StreamContext*)arg;
   AVFormatContext *fmtCTX = streamCTX->fmtCTX;
-  AVCodecContext * codecCTX = streamCTX->codecCTX;
+  AVCodecContext *codecCTX = streamCTX->codecCTX;
   SwrContext *swrCTX = NULL;
   Audio_Info *inf = streamCTX->inf;
   PlayBackState *state = streamCTX->state;
 
-  #ifdef LEGACY_LIBSWRSAMPLE
-    swrCTX = swr_alloc_set_opts(swrCTX,
-      inf->ch_layout, inf->sample_fmt, inf->sample_rate, // output
-      inf->ch_layout, codecCTX->sample_fmt, inf->sample_rate, // input
-      0, NULL
-    );
-  #else
-    swr_alloc_set_opts2(&swrCTX,
-      &inf->ch_layout, inf->sample_fmt, inf->sample_rate, // output
-      &inf->ch_layout, codecCTX->sample_fmt, inf->sample_rate, // input
-      0, NULL
-    );
-  #endif
+  setup_decoder(streamCTX, inf, &swrCTX);
 
-  if (!swrCTX || swr_init(swrCTX) < 0 )
+  if (!swrCTX || swr_init(swrCTX) < 0)
     swr_free(&swrCTX);
 
   AVPacket *packet = av_packet_alloc();
@@ -118,14 +109,14 @@ void *run_decoder(void *arg)
   }
 
   int64_t total_samples_played = 0;
-  int duration_time = fmtCTX->duration / 1000000.0;
+  int duration_sec = fmtCTX->duration / 1000000; // get duration in seconds
 
 decode:
   // first we read the data from container format (.mp3, .opus, .flac, ...etc)
   while (av_read_frame(fmtCTX, packet) >= 0){
 
     // we need only audio stream
-    if (packet->stream_index == inf->audioStream ){
+    if (packet->stream_index == inf->audioStream_index ){
 
       // send packet to frame decoder
       if (avcodec_send_packet(codecCTX, packet) < 0 )
@@ -135,8 +126,22 @@ decode:
       while (avcodec_receive_frame(codecCTX, frame) >= 0){
         // init duration progress
         double current_time = (double)total_samples_played / inf->sample_rate;
-        progress(state, current_time, duration_time);
+        progress(state, current_time, duration_sec);
         total_samples_played += frame->nb_samples;
+
+        // Check for seek request
+        pthread_mutex_lock(&state->lock);
+        if (state->seek_request){
+          handle_audio_seek(streamCTX, &duration_sec, &total_samples_played);
+
+          // Skip current packet and frame
+          av_packet_unref(packet);
+          av_frame_unref(frame);
+          
+          pthread_mutex_unlock(&state->lock);
+          goto decode; // restart from new position
+        }
+        pthread_mutex_unlock(&state->lock);
 
         // run this if plnar: convert from planar to interleaved
         if (swrCTX ){
@@ -264,14 +269,14 @@ void get_audio_info(const char *filename, StreamContext *streamCTX)
     die("ffmpeg: cannot find any streams");
 
   // here we try get audio stream index from container
-  int audioStream = -1;
-  audioStream = get_stream(streamCTX->fmtCTX, AVMEDIA_TYPE_AUDIO, audioStream);
+  int audioStream_index = -1;
+  audioStream_index = get_stream(streamCTX->fmtCTX, AVMEDIA_TYPE_AUDIO, audioStream_index);
 
-  if (audioStream == -1 )
+  if (audioStream_index == -1 )
     die("file: can't find AudioStream");
 
   // here we get the information about audio stream is codecParameters
-  const AVCodecParameters *codecPAR = streamCTX->fmtCTX->streams[audioStream]->codecpar;
+  const AVCodecParameters *codecPAR = streamCTX->fmtCTX->streams[audioStream_index]->codecpar;
   const AVCodec *codecID = avcodec_find_decoder(codecPAR->codec_id);
 
   // allocate empty decoder
@@ -311,7 +316,8 @@ void get_audio_info(const char *filename, StreamContext *streamCTX)
     inf->ch_layout = streamCTX->codecCTX->ch_layout,
   #endif
 
-  inf->audioStream = audioStream,
+  inf->audioStream_index = audioStream_index;
+  inf->audioStream = streamCTX->fmtCTX->streams[audioStream_index];
   inf->sample_rate = streamCTX->codecCTX->sample_rate,
   inf->sample_fmt = output_sample_fmt,
   inf->sample_fmt_bytes = av_get_bytes_per_sample(inf->sample_fmt),
