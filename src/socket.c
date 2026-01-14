@@ -1,7 +1,6 @@
 #include <errno.h>
 #include <signal.h>
 #include <string.h>
-#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -63,9 +62,7 @@ void *run_socket(void *arg)
           while ((n = recv(client, buf, sizeof(buf)-1, 0)) > 0) {
             buf[n] = '\0';
             if (!strncmp(buf, "q", 1)) die("");
-            if (!strncmp(buf, " ", 1)){
-                playback_toggle(state);
-            }
+            if (!strncmp(buf, " ", 1)) playback_toggle(state);
           }
           close(client);
         }

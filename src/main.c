@@ -5,7 +5,7 @@
 #include "utils.h"
 
 #define PROG_NAME "tomu"
-#define PROG_VER "0.0.8"
+#define PROG_VER "0.0.9"
 
 int main(int argc, char *argv[])
 {
@@ -21,6 +21,11 @@ int main(int argc, char *argv[])
     if (strcmp("--loop", arg) == 0)
       path_handle(filename, true);
 
+    // // TODO fix a loop (Later)
+    // else if (strcmp("--shuffle-loop", arg) == 0)
+    //   shuffle(filename, true);
+    // // -----------------------------------------------
+
     else if (strcmp("--help", arg) == 0)
       help();
 
@@ -29,6 +34,7 @@ int main(int argc, char *argv[])
 
     else 
       printf("[T] Unknown Arg '%s'\n", arg);
+
   } else path_handle(filename, false);
 
   return 0;
