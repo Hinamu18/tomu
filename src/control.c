@@ -96,7 +96,13 @@ void *handle_input(void *arg){
                 perror("poll ecsape sequence");
                 break;
             } // fuck off on errors
-            if (ret == 1 && (pfd.revents & POLLIN)) read(STDIN_FILENO, key_buf + 1, sizeof(key_buf) - 1); // read into key_buf[1] and forward
+            if (ret == 1 && (pfd.revents & POLLIN)) {
+                int n = read(STDIN_FILENO, key_buf + 1, sizeof(key_buf) - 1);
+                if (n < 0) {
+                    perror("read escape sequence");
+                    break;
+                }
+            }
         }
 
         // now we just find the proper keybinding..

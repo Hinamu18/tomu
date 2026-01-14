@@ -58,7 +58,7 @@ int setup_decoder(StreamContext *streamCTX, Audio_Info *inf, SwrContext **swrCTX
       0, NULL
     );
   #else
-    swr_alloc_set_opts2(*swrCTX,
+    swr_alloc_set_opts2(swrCTX,
       &inf->ch_layout, inf->sample_fmt, inf->sample_rate, // output
       &inf->ch_layout, streamCTX->codecCTX->sample_fmt, inf->sample_rate, // input
       0, NULL
