@@ -1,3 +1,11 @@
+## A: 6z7y 0.0.9_dirty - 2026-01-14
+- Support audio seeking forward and backward
+- improve source code
+## A: Yuki 0.0.8_1_dirty - 2026-01-13
+- Fixed playback looping
+- Remove shuffle-loop flag
+- Fixed slight term output glitches
+- Optimized the Makefile
 ## 0.0.8_dirty - 2026-01-13
 - Add diagram in project
 - Rebuild source code structure
@@ -14,8 +22,3 @@
 - Volume control for playback
 - Improved playback control logic
 - ignore ffmpeg log
-## A: Yuki 0.0.8_1_dirty - 2026-01-13
-- Fixed playback looping
-- Remove shuffle-loop flag
-- Fixed slight term output glitches
-- Optimized the Makefile
