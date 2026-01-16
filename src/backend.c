@@ -1,6 +1,7 @@
 #include <libavcodec/packet.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
+#include <libavutil/samplefmt.h>
 #include <libswresample/swresample.h>
 #include <libavutil/avutil.h>
 #include <stdlib.h>
@@ -90,133 +91,175 @@ void *run_decoder(void *arg)
   StreamContext *streamCTX = (StreamContext*)arg;
   AVFormatContext *fmtCTX = streamCTX->fmtCTX;
   AVCodecContext *codecCTX = streamCTX->codecCTX;
-  SwrContext *swrCTX = NULL;
   Audio_Info *inf = streamCTX->inf;
   PlayBackState *state = streamCTX->state;
 
-  setup_decoder(streamCTX, inf, &swrCTX);
+  SwrContext *swrCTX = NULL;        // resampler for sample format changes
+  SwrContext *speed_swrCTX = NULL;  // Separate resampler for playback speed changes
 
-  if (!swrCTX || swr_init(swrCTX) < 0)
-    swr_free(&swrCTX);
+  // Setup format converter (planar->interleaved if needed)
+  if ( av_sample_fmt_is_planar(codecCTX->sample_fmt) ){
+    setup_sample_fmt_resampler(streamCTX, inf, &swrCTX);
+    
+    if (swrCTX) {
+      if ( swr_init(swrCTX) < 0 )
+        swr_free(&swrCTX);
+    }
+  }
 
   AVPacket *packet = av_packet_alloc();
   AVFrame *frame = av_frame_alloc();
 
-  if (!packet || !frame ){
-    printf("something happend during packet or frame init!\n");
-    if (swrCTX ) swr_free(&swrCTX);
+  if ( !packet || !frame ) {
+    printf("ERROR: Failed to allocate packet/frame\n");
+    if (swrCTX) swr_free(&swrCTX);
+    if (speed_swrCTX) swr_free(&speed_swrCTX);
     return NULL;
   }
 
   int64_t total_samples_played = 0;
-  int duration_sec = fmtCTX->duration / 1000000; // get duration in seconds
+  int duration_sec = fmtCTX->duration / 1000000;
+  float last_speed = state->speed;
 
 decode:
-  // first we read the data from container format (.mp3, .opus, .flac, ...etc)
-  while (av_read_frame(fmtCTX, packet) >= 0){
+  while (av_read_frame(fmtCTX, packet) >= 0) {
 
-    // we need only audio stream
-    if (packet->stream_index == inf->audioStream_index ){
+    // only procces audio packets
+    if ( packet->stream_index == inf->audioStream_index ) {
 
-      // send packet to frame decoder
-      if (avcodec_send_packet(codecCTX, packet) < 0 )
-        continue;
+      // send packet to decoder
+      if ( avcodec_send_packet(codecCTX, packet) < 0 ) continue;
 
-      // frame recieves it as PCM samples (used by miniaudio for playback)
-      while (avcodec_receive_frame(codecCTX, frame) >= 0){
-        // init duration progress
+      // Receive decoded frame
+      while (avcodec_receive_frame(codecCTX, frame) >= 0) {
+        // show progress Display
         double current_time = (double)total_samples_played / inf->sample_rate;
         progress(state, current_time, duration_sec);
         total_samples_played += frame->nb_samples;
 
-        // Check for seek request
         pthread_mutex_lock(&state->lock);
-        if (state->seek_request){
-          handle_audio_seek(streamCTX, &duration_sec, &total_samples_played);
-
-          // Skip current packet and frame
-          av_packet_unref(packet);
-          av_frame_unref(frame);
+        
+          // Handle seek request
+          if (state->seek_request) {
+            handle_audio_seek(streamCTX, &duration_sec, &total_samples_played);
+            av_packet_unref(packet);
+            av_frame_unref(frame);
+            pthread_mutex_unlock(&state->lock);
+            goto decode;
+          }
+        
+        // Handle speed change
+        if (state->speed != last_speed) {
+          last_speed = state->speed;
           
-          pthread_mutex_unlock(&state->lock);
-          goto decode; // restart from new position
+          // Free old speed resampler if exists
+          if (speed_swrCTX) {
+            swr_free(&speed_swrCTX);
+            speed_swrCTX = NULL;
+          }
+          
+          // Create new speed resampler if speed ≠ 1.0
+          if (state->speed != 1.0f) {
+            setup_speed_resampler(streamCTX, inf, frame, &speed_swrCTX);
+          }
         }
         pthread_mutex_unlock(&state->lock);
 
-        // run this if plnar: convert from planar to interleaved
-        if (swrCTX ){
-          uint8_t *data_conv = malloc(frame->nb_samples * inf->ch * inf->sample_fmt_bytes);
-
-          if (!data_conv){
-            fprintf(stderr, "Error: Out of memory for audio convertion\n");
-            av_frame_unref(frame);
-            continue;
+        // Process audio based on conversion needs
+        uint8_t *output_data = NULL;
+        int output_bytes = 0;
+        
+        if (speed_swrCTX) {
+          // Speed conversion (with optional format conversion)
+          int out_samples = frame->nb_samples / state->speed;
+          
+          output_bytes = out_samples * inf->ch * inf->sample_fmt_bytes;
+          output_data = malloc(output_bytes);
+          
+          if (output_data) {
+            uint8_t *data_out[1] = {output_data};
+            int samples = swr_convert(speed_swrCTX, data_out, out_samples,
+                                     (const uint8_t**)frame->data, frame->nb_samples);
+            
+            if (samples > 0) {
+              output_bytes = samples * inf->ch * inf->sample_fmt_bytes;
+            } else {
+              free(output_data);
+              output_data = NULL;
+            }
           }
-
-          uint8_t *data[1] = {data_conv};
-
-          // start converting the samples
-          int samples = swr_convert(swrCTX,
-            data, frame->nb_samples, // output
-            (const uint8_t**)frame->data, frame->nb_samples // input
-          );
-
-          if (samples > 0 ){
-            // get how much bytes to write from this (PCM samples)
-            int bytes = samples * inf->ch * inf->sample_fmt_bytes;
-            // write in buffer
-            audio_buffer_write(streamCTX->buf, data[0], bytes);
+          
+        } else if (swrCTX) {
+          // Format conversion only (planar->interleaved)
+          output_bytes = frame->nb_samples * inf->ch * inf->sample_fmt_bytes;
+          output_data = malloc(output_bytes);
+          
+          if (output_data) {
+            uint8_t *data[1] = {output_data};
+            int samples = swr_convert(swrCTX, data, frame->nb_samples,
+                                     (const uint8_t**)frame->data, frame->nb_samples);
+            
+            if (samples > 0) {
+              output_bytes = samples * inf->ch * inf->sample_fmt_bytes;
+            } else {
+              free(output_data);
+              output_data = NULL;
+            }
           }
-          free(data_conv);
-
-          // run this if: already interleaved
+          
         } else {
-          // get how much bytes to write from this (PCM samples)
-          int bytes = frame->nb_samples * inf->ch * inf->sample_fmt_bytes;
-          // write in buffer
-          audio_buffer_write(streamCTX->buf, frame->data[0], bytes);
+          // Direct write (no conversion needed)
+          output_bytes = frame->nb_samples * inf->ch * inf->sample_fmt_bytes;
+          output_data = frame->data[0];
         }
+        
+        // Write to buffer
+        if (output_data) {
+          audio_buffer_write(streamCTX->buf, output_data, output_bytes);
+          
+          // Free if we allocated memory (for speed_swrCTX or swrCTX paths)
+          if (output_data != frame->data[0]) {
+            free(output_data);
+          }
+        }
+        
         av_frame_unref(frame);
       }
     }
     av_packet_unref(packet);
 
-    // check if paused
+    // Check pause state
     pthread_mutex_lock(&state->lock);
-
-      while (state->paused)
-        pthread_cond_wait(&state->wait_cond, &state->lock);
-
+    while (state->paused)
+      pthread_cond_wait(&state->wait_cond, &state->lock);
     pthread_mutex_unlock(&state->lock);
 
     if (!state->running) break;
   }
 
-    if (state->looping && state->running) { // if we're looping, restart again..
-        av_seek_frame(fmtCTX, -1, 0, AVSEEK_FLAG_BACKWARD);
-        avcodec_flush_buffers(codecCTX);
-        total_samples_played = 0;
-        goto decode; // find another way, labels aren't good for readability
-    }
+  // Handle looping
+  if (state->looping && state->running) {
+    av_seek_frame(fmtCTX, -1, 0, AVSEEK_FLAG_BACKWARD);
+    avcodec_flush_buffers(codecCTX);
+    total_samples_played = 0;
+    goto decode;
+  }
 
   printf("\n");
 
-  // IMPORTANT: Signal all waiting threads before exiting
-  // Note that other threads are implemented to exit once state.running is false so...
+  // Cleanup
   pthread_mutex_lock(&state->lock);
-  state->running = 0;  // Ensure running is 0
+  state->running = 0;
   pthread_cond_broadcast(&state->wait_cond);
   pthread_mutex_unlock(&state->lock);
   
-  // clean
   if (swrCTX) swr_free(&swrCTX);
+  if (speed_swrCTX) swr_free(&speed_swrCTX);
   av_frame_free(&frame);
   av_packet_free(&packet);
-
-  // exit
   return NULL;
 }
-  
+
 // miniaudio will use this callback to read PCM samples
 void ma_dataCallback(ma_device *ma_config, void *output, const void *input, ma_uint32 frameCount)
 {
@@ -231,104 +274,72 @@ void ma_dataCallback(ma_device *ma_config, void *output, const void *input, ma_u
   // check if paused
   pthread_mutex_lock(&state->lock);
 
-  while (state->paused)
-    pthread_cond_wait(&state->wait_cond, &state->lock);
+    while (state->paused)
+      pthread_cond_wait(&state->wait_cond, &state->lock);
+
+  // Apply volume
+  if (state->volume != 1.00f)
+    ma_apply_volume_factor_pcm_frames(output, frameCount, inf->ma_fmt, inf->ch, state->volume);
 
   pthread_mutex_unlock(&state->lock);
-  
-  // Apply volume (already have safe copy)
-  if (state->volume != 1.00f) {
-    ma_apply_volume_factor_pcm_frames(output, frameCount, inf->ma_fmt, inf->ch, state->volume);
-  }
 }
 
-// init miniaudio config before using
-ma_device_config init_miniaudioConfig(Audio_Info *inf, StreamContext *streamCTX)
-{
-  ma_device_config ma_config = ma_device_config_init(ma_device_type_playback);
-
-  ma_config.playback.channels = inf->ch;
-  ma_config.playback.format = inf->ma_fmt;
-  ma_config.sampleRate = inf->sample_rate;
-  ma_config.dataCallback = ma_dataCallback;
-  ma_config.pUserData = streamCTX;
-
-  return ma_config;
-}
+void store_information(StreamContext *streamCTX, int audioStream_index, enum AVSampleFormat output_sample_fmt );
 
 // reads the file and creates a Stream Context
 void get_audio_info(const char *filename, StreamContext *streamCTX)
 {
-  Audio_Info *inf = streamCTX->inf;
-
   // Read File
-  if (avformat_open_input(&streamCTX->fmtCTX, filename, NULL, NULL) < 0 )
+  if ( avformat_open_input(&streamCTX->fmtCTX, filename, NULL, NULL) < 0 )
     die("ffmpeg: file type is not supported");
 
-  if (avformat_find_stream_info(streamCTX->fmtCTX, NULL) < 0 )
+  // Read stream information from the file (codec, format, duration, etc.)
+  if ( avformat_find_stream_info(streamCTX->fmtCTX, NULL) < 0 )
     die("ffmpeg: cannot find any streams");
 
-  // here we try get audio stream index from container
+  // try get audio stream index from container
   int audioStream_index = -1;
-  audioStream_index = get_stream(streamCTX->fmtCTX, AVMEDIA_TYPE_AUDIO, audioStream_index);
+  audioStream_index = get_stream(streamCTX->fmtCTX, AVMEDIA_TYPE_AUDIO);
 
-  if (audioStream_index == -1 )
+  if ( audioStream_index == -1 )
     die("file: can't find AudioStream");
 
-  // here we get the information about audio stream is codecParameters
+  // get the information about audio stream
   const AVCodecParameters *codecPAR = streamCTX->fmtCTX->streams[audioStream_index]->codecpar;
-  const AVCodec *codecID = avcodec_find_decoder(codecPAR->codec_id);
+  const AVCodec *codecID = avcodec_find_decoder(codecPAR->codec_id); // get correct codec id for decoder
 
   // allocate empty decoder
   streamCTX->codecCTX = avcodec_alloc_context3(codecID);
 
-  if (!streamCTX->codecCTX )
+  if ( !streamCTX->codecCTX )
     die("ffmpeg: failed allocate codec!");
 
-  // Copy audio specification to decoder
+  // Copy information codec to decoder
   avcodec_parameters_to_context(streamCTX->codecCTX, codecPAR);
 
   // initialize decoder with actual codec
   if (avcodec_open2(streamCTX->codecCTX, codecID, NULL) < 0)
     die("ffmpeg: failed init decoder!");
 
-  // Audio samples can be stored in two formats: PLANAR or INTERLEAVED
-  // 
-  // PLANAR (separate channels):           INTERLEAVED (mixed channels):
-  //   Channel 0: [L L L L L L]              [L R L R L R L R L R]
-  //   Channel 1: [R R R R R R]
-  // 
-  // Speakers need INTERLEAVED format! We must convert PLANAR to INTERLEAVED.
-  // The decoder will take care of converting sample formats
+  // Speakers need INTERLEAVED format! We must convert PLANAR to INTERLEAVED. (see diagram doc for understand)
   enum AVSampleFormat input_sample_fmt = streamCTX->codecCTX->sample_fmt;
   enum AVSampleFormat output_sample_fmt = input_sample_fmt;
   
-  if (av_sample_fmt_is_planar(input_sample_fmt)){
+  // check if planar give interleaved format or skip
+  if ( av_sample_fmt_is_planar(input_sample_fmt) ){
     output_sample_fmt = get_interleaved(input_sample_fmt);
   }
 
-  // save to inf base information
-  #ifdef LEGACY_LIBSWRSAMPLE
-    inf->ch = streamCTX->codecCTX->channels,
-    inf->ch_layout = streamCTX->codecCTX->channel_layout,
-  #else
-    inf->ch = streamCTX->codecCTX->ch_layout.nb_channels,
-    inf->ch_layout = streamCTX->codecCTX->ch_layout,
-  #endif
-
-  inf->audioStream_index = audioStream_index;
-  inf->audioStream = streamCTX->fmtCTX->streams[audioStream_index];
-  inf->sample_rate = streamCTX->codecCTX->sample_rate,
-  inf->sample_fmt = output_sample_fmt,
-  inf->sample_fmt_bytes = av_get_bytes_per_sample(inf->sample_fmt),
-  inf->ma_fmt = get_ma_format(output_sample_fmt);
+  // Store audio info
+  store_information(streamCTX, audioStream_index, output_sample_fmt);
 }
+
 
 // this handles playing audio files.
 int playback_run(const char *filename, uint loop)
 {
+  // 1. create storege boxes
   Audio_Info inf = {0};
-  Audio_Buffer *buf = NULL;
   PlayBackState state = {0};
   StreamContext streamCTX = {0};
 
@@ -340,44 +351,44 @@ int playback_run(const char *filename, uint loop)
 
   av_log_set_level(AV_LOG_QUIET); // ignore warning
 
-  // create StreamContext from file.
+  // 2. get file information
   get_audio_info(filename, &streamCTX);
-  init_playbackstatus(&state, loop);
 
-  // init threads
-  pthread_t control_thread;
-  pthread_t sock_thread;
-  pthread_t decoder_thread;
 
-  // init a buffer size = 500ms
+  // 3. initialize a buffer, size = 500ms
   int capacity = (inf.sample_rate) * (inf.ch) * (inf.sample_fmt_bytes) * 0.5;
-  streamCTX.buf = audio_buffer_init(capacity);
+  streamCTX.buf = audio_buffer_init(capacity); // initialize buffer
 
-  // init miniaudio device (for sending PCM samples to speaker)
+  // 4. init miniaudio device (for sending PCM samples to speaker)
   ma_device device;
   ma_device_config ma_config = init_miniaudioConfig(&inf, &streamCTX);
 
-  // initialize the device output
+  // 4.1 initialize the device output
   if (ma_device_init(NULL, &ma_config, &device) != MA_SUCCESS ){
-    audio_buffer_destroy(buf);
+    audio_buffer_destroy(streamCTX.buf);
     pthread_mutex_destroy(&state.lock);
     pthread_cond_destroy(&state.wait_cond);
-    return 1;
+    cleanUP(streamCTX.fmtCTX, streamCTX.codecCTX);
+    die("miniaudio: something happend when initialize device output");
   }
 
-  // Outputs
+  // 5. Display Outputs
+  // progress output inside decoder must be there
+  init_playbackstatus(&state, loop);
   if (streamCTX.fmtCTX->metadata)
     print_metadata(streamCTX.fmtCTX->metadata);
 
   printf("Playing: %s\n",  filename);
   printf("%.2dHz, %dch, %s\n", inf.sample_rate, inf.ch, av_get_sample_fmt_name(inf.sample_fmt));
 
-  // start threads
+  // 6 start threads
+  pthread_t control_thread, sock_thread, decoder_thread;
+
   pthread_create(&control_thread, NULL, handle_input, &state); // terminal controls
   pthread_create(&sock_thread, NULL, run_socket, &state); // socket controls
   pthread_create(&decoder_thread, NULL, run_decoder, &streamCTX); // decoder ._.
   
-  // start mini audio and wait decoder write to end
+  // Start audio playback device
   ma_device_start(&device);
 
   // wait for all threads to finish.. (if only we could allow the main thread to have coffee during this..)
@@ -385,13 +396,13 @@ int playback_run(const char *filename, uint loop)
   pthread_join(control_thread, NULL);
   pthread_join(sock_thread, NULL);
 
-  // clean up
+  // 7. clean up
   ma_device_stop(&device);
   ma_device_uninit(&device);
   audio_buffer_destroy(streamCTX.buf);
   pthread_mutex_destroy(&state.lock);
   pthread_cond_destroy(&state.wait_cond);
-
   cleanUP(streamCTX.fmtCTX, streamCTX.codecCTX);
+
   return 0;
 }

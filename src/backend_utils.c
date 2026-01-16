@@ -35,22 +35,41 @@ ma_format get_ma_format(enum AVSampleFormat value)
 }
 
 // fn to search correct stream you want
-int get_stream(AVFormatContext *fmtCTX, int type, int value)
+int get_stream(AVFormatContext *fmtCTX, int type)
 {
   for (int i = 0; i < fmtCTX->nb_streams; i++){
     AVStream *stream = fmtCTX->streams[i];
-    if (stream->codecpar->codec_type == type ){
-      value = i;
-      break;
-    }
+    if (stream->codecpar->codec_type == type )
+      return i;
   }
-  return value;
+  return -1;
 }
 
-// Setup SWR context
-int setup_decoder(StreamContext *streamCTX, Audio_Info *inf, SwrContext **swrCTX)
+// store information Audio file to Audio_Info structure
+void store_information(StreamContext *streamCTX, int audioStream_index, enum AVSampleFormat output_sample_fmt )
 {
+  Audio_Info *inf = streamCTX->inf;
 
+  #ifdef LEGACY_LIBSWRSAMPLE
+    inf->ch = streamCTX->codecCTX->channels,
+    inf->ch_layout = streamCTX->codecCTX->channel_layout,
+  #else
+    inf->ch = streamCTX->codecCTX->ch_layout.nb_channels,
+    inf->ch_layout = streamCTX->codecCTX->ch_layout,
+  #endif
+
+  inf->audioStream_index = audioStream_index;
+  inf->audioStream = streamCTX->fmtCTX->streams[audioStream_index];
+  inf->sample_rate = streamCTX->codecCTX->sample_rate,
+  inf->sample_fmt = output_sample_fmt,
+  inf->sample_fmt_bytes = av_get_bytes_per_sample(inf->sample_fmt),
+  inf->ma_fmt = get_ma_format(output_sample_fmt);
+}
+
+
+// Setup SWR context convert
+int setup_sample_fmt_resampler(StreamContext *streamCTX, Audio_Info *inf, SwrContext **swrCTX)
+{
   #ifdef LEGACY_LIBSWRSAMPLE
     *swrCTX = swr_alloc_set_opts(*swrCTX,
       inf->ch_layout, inf->sample_fmt, inf->sample_rate, // output
@@ -68,11 +87,47 @@ int setup_decoder(StreamContext *streamCTX, Audio_Info *inf, SwrContext **swrCTX
   return 1;
 }
 
+void setup_speed_resampler(StreamContext *streamCTX, Audio_Info *inf, AVFrame *frame, SwrContext **speed_swrCTX)
+{
+  // int new_rate = (int)(inf->sample_rate * streamCTX->state->speed);
+  int new_rate = (int)(inf->sample_rate / streamCTX->state->speed);
+  enum AVSampleFormat input_fmt = frame->format;
+  enum AVSampleFormat output_fmt = inf->sample_fmt;
+  #ifdef LEGACY_LIBSWRSAMPLE
+    uint64_t ch_layout_in = streamCTX->codecCTX->channel_layout;
+    if (ch_layout_in == 0) {
+      ch_layout_in = av_get_default_channel_layout(streamCTX->codecCTX->channels);
+    }
+    
+    *speed_swrCTX = swr_alloc_set_opts(NULL,
+      ch_layout_in, output_fmt, new_rate,
+      ch_layout_in, input_fmt, inf->sample_rate,
+      0, NULL
+    );
+  #else
+    AVChannelLayout layout;
+    av_channel_layout_default(&layout, inf->ch);
+    
+    int alloc_ret = swr_alloc_set_opts2(&speed_swrCTX,
+      &layout, output_fmt, new_rate,
+      &layout, input_fmt, inf->sample_rate,
+      0, NULL
+    );
+    av_channel_layout_uninit(&layout);
+  #endif
+  
+  if (speed_swrCTX && swr_init(*speed_swrCTX) < 0) {
+    swr_free(speed_swrCTX);
+    speed_swrCTX = NULL;
+  }
+}
+
 void init_playbackstatus(PlayBackState *state, uint loop)
 {
   state->running = 1;
   state->paused = 0;
   state->volume = 1.00f;
+  state->speed = 1.00f;
   state->looping = loop;
 
   state->seek_request = 0;
@@ -82,7 +137,8 @@ void init_playbackstatus(PlayBackState *state, uint loop)
   pthread_cond_init(&state->wait_cond, NULL);
 }
 
-void print_metadata(AVDictionary *metadata) {
+void print_metadata(AVDictionary *metadata)
+{
   AVDictionaryEntry *tag = NULL;
 
   printf("File tags:\n");
@@ -91,17 +147,18 @@ void print_metadata(AVDictionary *metadata) {
   }
 }
 
-// Reset audio buffer to empty state (used after seeking to discard old audio)
-void audio_buffer_reset(Audio_Buffer *buf)
+// init miniaudio config before using
+ma_device_config init_miniaudioConfig(Audio_Info *inf, StreamContext *streamCTX)
 {
-  pthread_mutex_lock(&buf->lock);
+  ma_device_config ma_config = ma_device_config_init(ma_device_type_playback);
 
-    buf->filled = 0;
-    buf->read_pos = 0;
-    buf->write_pos = 0;
-    pthread_cond_broadcast(&buf->space_free);
+  ma_config.playback.channels = inf->ch;
+  ma_config.playback.format = inf->ma_fmt;
+  ma_config.sampleRate = inf->sample_rate;
+  ma_config.dataCallback = ma_dataCallback;
+  ma_config.pUserData = streamCTX;
 
-  pthread_mutex_unlock(&buf->lock);
+  return ma_config;
 }
 
 Audio_Buffer *audio_buffer_init(int capacity)
@@ -120,6 +177,19 @@ Audio_Buffer *audio_buffer_init(int capacity)
   return buf;
 }
 
+// Reset audio buffer to empty state (used after seeking to discard old audio)
+void audio_buffer_reset(Audio_Buffer *buf)
+{
+  pthread_mutex_lock(&buf->lock);
+
+    buf->filled = 0;
+    buf->read_pos = 0;
+    buf->write_pos = 0;
+    pthread_cond_broadcast(&buf->space_free);
+
+  pthread_mutex_unlock(&buf->lock);
+}
+
 void audio_buffer_destroy(Audio_Buffer *buf)
 {
   if (buf ){
@@ -130,7 +200,6 @@ void audio_buffer_destroy(Audio_Buffer *buf)
     free (buf);
   }
 }
-
 
 void handle_audio_seek(StreamContext *streamCTX, int *duration_time, int64_t *total_samples_played)
 {
@@ -176,7 +245,8 @@ inline void progress(PlayBackState *state, double current_time, int duration_tim
 
   int pos = (current_time / duration_time) * bar_width;
 
-  printf("\033[2K"); // clear the line before writing, if this causes flickering, do it manually (using spaces)
+  printf("\0337");
+  printf("\033[0J");
   printf("\r[");
   for (int i = 0; i < bar_width; i++){
 
@@ -190,11 +260,13 @@ inline void progress(PlayBackState *state, double current_time, int duration_tim
       printf(".");
   }
 
-    printf("] %d:%02d:%02d / %d:%02d:%02d (%.00f%%) | v: %.0f%%",
+    printf("] %d:%02d:%02d / %d:%02d:%02d (%.00f%%) | %.2fx v: %.0f%%\r",
     get_hour(current_time), get_min(current_time), get_sec(current_time), 
     get_hour(duration_time), get_min(duration_time), get_sec(duration_time),
-    (current_time / duration_time) * 100.0, state->volume * 100.0f
+    (current_time / duration_time) * 100.0, state->speed,
+    state->volume * 100.0f
   );
+  printf("\0338");
 
   fflush(stdout);
 }

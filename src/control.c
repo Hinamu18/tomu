@@ -14,27 +14,6 @@
 #include "control.h"
 #include "utils.h"
 
-void help(){
-  printf(
-    "Usage: tomu [COMMAND] [PATH]\n"
-    " Commands:\n\n"
-
-    "   --loop            : loop same sound\n"
-    "   --version         : show version of program\n"
-    "   --help            : show help message\n"
-
-    "\nkeys:\n"
-    " (Space) = pause/resume\n"
-    " (q) = quit\n"
-    " (-) = decrease volume\n"
-    " (+) = increase volume\n"
-    " (↑/→) = audio seek forward +5s/1m\n"
-    " (←/↓) = audio seek backward -5s/1m\n"
-
-    "\nExample: tomu loop [FILE.mp3]\n"
-  );
-}
-
 struct keybinding { const char *key; void (*handler)(PlayBackState*); };
 
 #define CTRL_KEY(key) (const char[]){key - 'a' + 1 , '\0'} // remove this when you move the code to socket function
@@ -48,6 +27,8 @@ static const struct keybinding keybindings[] = {
     {"\x1b[B",     	 seek_backward_min}, // Down arrow
     {"\x1b[D",       seek_backward_sec},   // Left arrow
     {"\x1b[C",       seek_forward_sec},    // Right arrow
+    {"["     ,       playback_speed_decrease},
+    {"]"     ,       playback_speed_increase},
 };
 
 static const int kbds_len = sizeof(keybindings) / sizeof(struct keybinding);
@@ -130,6 +111,10 @@ void *handle_input(void *arg){
   return NULL;
 }
 
+// =================================================================
+
+// control playback (stop/resume/stop)
+
 // functions for playback
 // fn toggle pause/resume
 inline void playback_toggle(PlayBackState *state) {
@@ -157,9 +142,15 @@ inline void playback_stop(PlayBackState *state){
   pthread_mutex_lock(&state->lock);
     state->paused = 0;
     state->running = 0;
+    // state->shuffle = 0;
+    // state->looping = 0;
     pthread_cond_broadcast(&state->wait_cond);
   pthread_mutex_unlock(&state->lock);
 }
+
+// =================================================================
+
+// control audio seek
 
 // Requests a seek forward by 5 seconds
 void seek_forward_sec(PlayBackState *state)
@@ -212,9 +203,28 @@ void seek_backward_min(PlayBackState *state)
 
 // =================================================================
 
+// control speed playback
 
-// functions for handle a volume of playback audio
-// fn change value of a control volume
+void playback_speed_increase(PlayBackState *state)
+{
+  pthread_mutex_lock(&state->lock);
+    state->speed += 0.05f;
+    if (state->speed > 2.00f) state->speed = 2.00f;
+  pthread_mutex_unlock(&state->lock);
+}
+
+void playback_speed_decrease(PlayBackState *state)
+{
+  pthread_mutex_lock(&state->lock);
+    state->speed -= 0.05f;
+    if (state->speed < 0.25f) state->speed = 0.25f;
+  pthread_mutex_unlock(&state->lock);
+}
+
+// =================================================================
+
+// control volume playback
+
 inline void volume_increase(PlayBackState *state){
   pthread_mutex_lock(&state->lock);
     state->volume += 0.02f;
@@ -231,13 +241,17 @@ inline void volume_decrease(PlayBackState *state){
 // ===================================================================
 
 void shuffle(const char *path, uint loop){
+
+  // init dir reader
   DIR *dir = opendir(path);
   struct dirent *entry;
+
+  // 2. count files in path
   int count = 0;
   srand(time(NULL));
 
   if (!dir ) goto free;
-  
+
   while ((entry = readdir(dir)) != NULL ){
     if (strcmp(".", entry->d_name) == 0 || strcmp("..", entry->d_name) == 0) 
       continue;
@@ -247,7 +261,10 @@ void shuffle(const char *path, uint loop){
 
   if (count == 0) goto free;
 
+  // 2. get random index
   int index_rand = rand() % count;
+
+  // 3. enter playback_run by random index file
   rewinddir(dir);
 
   for (int i = 0; i <= index_rand; i++){
@@ -264,8 +281,8 @@ void shuffle(const char *path, uint loop){
   // find a better control flow.. you're running the die function on end.
   closedir(dir); 
   return;
-
 free:
   closedir(dir);
   die("FILE: %s",strerror(errno));
 }
+

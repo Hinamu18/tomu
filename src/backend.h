@@ -16,6 +16,7 @@ typedef struct {
   int running;
   int paused;
   float volume;
+  float speed;
   uint looping;
   int seek_request; // Flag: 1 = seek needed
   int64_t seek_target; // Where seek to (in microseconds)
@@ -64,6 +65,7 @@ typedef struct {
 
 } StreamContext;
 
-int playback_run(const char *filename, uint loop);
+int playback_run(const char *filename, uint loop_mode);
+void ma_dataCallback(ma_device *ma_config, void *output, const void *input, ma_uint32 frameCount);
 
 #endif
