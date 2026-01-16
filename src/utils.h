@@ -6,6 +6,7 @@
 #define false 0
 #define true 1
 
+void help();
 void cleanUP(AVFormatContext *fmtCTX, AVCodecContext *codecCTX);
 void path_handle(const char *path, uint loop);
 
