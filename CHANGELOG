@@ -1,3 +1,8 @@
+## A: 6z7y 0.0.10_dirty - 2026-01-16
+- Support playback speed
+- rebuild source logical improve
+- fix progress glitch
+- add comment steps & change some comments
 ## A: 6z7y 0.0.9_dirty - 2026-01-14
 - Support audio seeking forward and backward
 - improve source code
