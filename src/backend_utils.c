@@ -108,7 +108,7 @@ void setup_speed_resampler(StreamContext *streamCTX, Audio_Info *inf, AVFrame *f
     AVChannelLayout layout;
     av_channel_layout_default(&layout, inf->ch);
     
-    int alloc_ret = swr_alloc_set_opts2(&speed_swrCTX,
+    int alloc_ret = swr_alloc_set_opts2(speed_swrCTX,
       &layout, output_fmt, new_rate,
       &layout, input_fmt, inf->sample_rate,
       0, NULL

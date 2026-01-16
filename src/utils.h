@@ -1,6 +1,7 @@
 #ifndef UTILS_H
 #define UTILS_H
 
+#include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 
 #define false 0
