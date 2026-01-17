@@ -1,6 +1,6 @@
 CC = cc
 CFLAGS = -Wall -g -O3 -Iinclude
-LIBS = -lavformat -lavcodec -lavutil -lswresample -lm -lpthread
+LIBS = -lm -lpthread -lavformat -lavcodec -lavutil -lswresample
 
 INSTALL_PATH = /usr/bin
 
@@ -19,11 +19,11 @@ all: $(SERVER_BIN)
 
 $(SERVER_BIN): $(SERVER_OBJECTS)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(LIBS) $(SERVER_OBJECTS) -o $@
+	$(CC) $(SERVER_OBJECTS) -o $@ $(CFLAGS) $(LIBS)
 
 $(BUILD_DIR)/%.o: $(SERVER_SRC_DIR)/%.c
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) -c $< -o $@ $(CFLAGS) $(LIBS)
 
 install: all
 	sudo install -m755 $(BINS) $(INSTALL_PATH)
