@@ -2,10 +2,11 @@
 #include <string.h>
 
 // #include "control.h"
+#include "backend.h"
 #include "utils.h"
 
 #define PROG_NAME "tomu"
-#define PROG_VER "0.0.10"
+#define PROG_VER "0.0.11"
 
 int main(int argc, char *argv[])
 {
@@ -26,26 +27,11 @@ int main(int argc, char *argv[])
       return 0;
     }
 
-    // TODO later
-    // else if ( strcmp("--shuffle", option) == 0 ){
-    //   if ( argc < 3 ){
-    //     printf("[T]: Please Provide what to shuffle\n");
-    //     return 1;
-    //   }
-    //
-    //   char *target = argv[2];
-    //
-    //   // shuffle with playlist
-    //   // meaning random with change in same path
-    //   // tomu --shuffle playlist [DIR]
-    //   if (strcmp("playlist", target) == 0)
-    //     shuffle(path, true);
-    //
-    //   else
-    //     printf("[T]: Unknown Shuffle target '%s'\n", target);
-    //
-    //   return 0;
-    // }
+    else if ( strcmp("--shuffle", option) == 0 ){
+      //DirFiles.shuffle = true; // TODO mv this later
+      path_handle(path, false);
+      return 0;
+    }
 
     else if ( strcmp("--help", option) == 0 ){
       help();
@@ -64,6 +50,7 @@ int main(int argc, char *argv[])
   }
 
   // 3. No options? Just handle the path (check file or directory)  
+  DirFiles.shuffle = true; // TODO mv this later
   path_handle(path, false);
   return 0;
 }

@@ -6,6 +6,7 @@
 
 #define false 0
 #define true 1
+extern uint KeepPlayingDirectory;
 
 void help();
 void cleanUP(AVFormatContext *fmtCTX, AVCodecContext *codecCTX);

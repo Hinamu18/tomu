@@ -5,6 +5,7 @@
 #include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
 #include <libswresample/swresample.h>
+#include <stdbool.h>
 #include "../libs/miniaudio.h"
 
 #if LIBSWRESAMPLE_VERSION_MAJOR <= 3
@@ -18,7 +19,9 @@ typedef struct {
   float volume;
   float speed;
   uint looping;
+  uint shuffle;
   int seek_request; // Flag: 1 = seek needed
+  //
   int64_t seek_target; // Where seek to (in microseconds)
   pthread_mutex_t lock;
   pthread_cond_t wait_cond;
@@ -64,6 +67,18 @@ typedef struct {
   PlayBackState *state;
 
 } StreamContext;
+
+// struct for data of the files in dir
+typedef struct {
+  int totalFiles;
+  int currentFile;
+  uint shuffle;
+  // this for cleaning (needed)
+  bool DirLoopStop;
+  char** files;
+  char* path;
+} dirFiles;
+extern dirFiles DirFiles;
 
 int playback_run(const char *filename, uint loop_mode);
 void ma_dataCallback(ma_device *ma_config, void *output, const void *input, ma_uint32 frameCount);
