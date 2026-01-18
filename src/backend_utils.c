@@ -1,6 +1,8 @@
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <stdio.h>
+#include <dirent.h>
+#include <string.h>
 #include "../libs/miniaudio.h"
 
 #include "backend.h"
@@ -260,13 +262,52 @@ inline void progress(PlayBackState *state, double current_time, int duration_tim
       printf(".");
   }
 
-    printf("] %d:%02d:%02d / %d:%02d:%02d (%.00f%%) | %.2fx v: %.0f%%\r",
+    printf("] %d:%02d:%02d / %d:%02d:%02d (%.00f%%) | %.2fx v: %.0f%%, s:%d, l:%d\r",
     get_hour(current_time), get_min(current_time), get_sec(current_time), 
     get_hour(duration_time), get_min(duration_time), get_sec(duration_time),
     (current_time / duration_time) * 100.0, state->speed,
-    state->volume * 100.0f
+    state->volume * 100.0f, DirFiles.shuffle, state->looping
   );
   printf("\0338");
 
   fflush(stdout);
+}
+
+// Read all the files in dir and return them 
+char** extractDir(const char* path){
+  // why do i realloc ? because i want O(n) 
+  // its better than count then add all the files it will be O(n^2)
+
+  // TODO make it only extract audio files
+  // TODO if there isn't any file close the program 
+
+  DIR *dir = opendir(path);
+  int capacity = 10;
+  char **files = malloc(capacity * sizeof(char*));
+
+  struct dirent* entry;
+  while ((entry = readdir(dir)) != NULL) {
+
+    if (strcmp(entry->d_name, ".") == 0 ||
+      strcmp(entry->d_name, "..") == 0)
+      continue;
+
+    // Grow array if needed
+    if (DirFiles.totalFiles == capacity) {
+      capacity *= 2;
+      char **tmp = realloc(files, capacity * sizeof(char *));
+      if (!tmp) {
+        // cleanup on failure
+        for (int i = 0; i < DirFiles.totalFiles; i++)
+          free(files[i]);
+        free(files);
+        closedir(dir);
+        return NULL;
+      }
+      files = tmp;
+
+    }
+    files[DirFiles.totalFiles++] = strdup(entry->d_name);
+  }
+  return files;
 }

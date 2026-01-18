@@ -28,6 +28,8 @@ void handle_audio_seek(StreamContext *streamCTX, int *duration_time, int64_t *to
 void print_metadata(AVDictionary *metadata);
 void progress(PlayBackState *state, double current_time, int duration_time);
 
+char** extractDir(const char* path);
+
 static inline int get_sec(double value){
   return (int)value % 60;
 }

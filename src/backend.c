@@ -386,7 +386,7 @@ int playback_run(const char *filename, uint loop)
 
   pthread_create(&control_thread, NULL, handle_input, &state); // terminal controls
   pthread_create(&sock_thread, NULL, run_socket, &state); // socket controls
-  pthread_create(&decoder_thread, NULL, run_decoder, &streamCTX); // decoder ._.
+  pthread_create(&decoder_thread, NULL, run_decoder, &streamCTX); // decoder ._. 
   
   // Start audio playback device
   ma_device_start(&device);
@@ -403,6 +403,5 @@ int playback_run(const char *filename, uint loop)
   pthread_mutex_destroy(&state.lock);
   pthread_cond_destroy(&state.wait_cond);
   cleanUP(streamCTX.fmtCTX, streamCTX.codecCTX);
-
   return 0;
 }

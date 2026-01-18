@@ -1,11 +1,21 @@
 #include <libavformat/avformat.h>
 #include <libavcodec/codec.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 
 #include "backend.h"
+#include "backend_utils.h"
 #include "control.h"
 #include "utils.h"
+
+extern PlayBackState STATE;
+uint KeepPlayingDirectory = 1;
+
+// defined here because of the extren
+dirFiles DirFiles = {
+  .DirLoopStop = true
+};
 
 inline void help()
 {
@@ -20,12 +30,15 @@ inline void help()
     "\nkeys:\n"
     " (Space) = pause/resume\n"
     " (q) = quit\n"
+    " (s) = shuffle toggle\n"
+    " (l) = loop toggle"
     " (-) = decrease volume\n"
     " (+) = increase volume\n"
     " (↑/→) = audio seek forward +5s/1m\n"
     " (←/↓) = audio seek backward -5s/1m\n"
     " ([) = audio speed decrease\n"
     " (]) = audio speed increase\n"
+    " (</>) = (Pervious/Next) audio\n"
 
     "\nExample: tomu loop [FILE.mp3]\n"
   );
@@ -40,12 +53,44 @@ void path_handle(const char *path, uint loop)
 {
   struct stat st;
 
-  if (stat(path, &st) < 0 ) goto bad_path; //
+  if (stat(path, &st) < 0 ) goto bad_path;
 
-    // start checking
-    if (S_ISDIR(st.st_mode)) shuffle(path, loop); // this folder
-    else if (S_ISREG(st.st_mode)) playback_run(path, loop); // this file
-    else goto bad_path; // other
+  if (S_ISDIR(st.st_mode)){
+    DirFiles.path = (char*)path;
+    DirFiles.files = extractDir(path);
+    DirFiles.DirLoopStop = false;
+
+    shuffle(); // Set initial file
+
+    // Keep playing files until the user quits 
+    // (sets KeepPlayingDirectory = 0)
+    while ((KeepPlayingDirectory || DirFiles.DirLoopStop)) {
+      if (DirFiles.shuffle)
+        shuffle();
+
+      char filename[1024];
+      snprintf(filename, sizeof(filename), 
+         "%s/%s", DirFiles.path, DirFiles.files[DirFiles.currentFile]
+      );
+
+      // Run the player. It will block here until the song ends or 'next' is pressed.
+      playback_run(filename, loop);
+
+      // If playback_run returns, it cleaned up its own buffer/context.
+      // We loop back and play the NEW DirFiles.currentFile.
+    }
+
+    // Cleanup files
+    for (int i=0; i<DirFiles.totalFiles; i++) {
+      free(DirFiles.files[i]);
+    }
+    free(DirFiles.files);
+  }
+  // FILE HANDLING
+  else if (S_ISREG(st.st_mode)) {
+    playback_run(path, loop);
+  }
+  else goto bad_path;
 
   return;
 

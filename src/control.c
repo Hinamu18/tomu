@@ -1,4 +1,3 @@
-#include <errno.h>
 #include <stdio.h>
 #include <sys/poll.h>
 #include <termios.h>
@@ -29,7 +28,12 @@ static const struct keybinding keybindings[] = {
     {"\x1b[C",       seek_forward_sec},    // Right arrow
     {"["     ,       playback_speed_decrease},
     {"]"     ,       playback_speed_increase},
+    {"l"     ,       loop_toggle},
+    {"s"     ,       shuffle_toggle},
+    {">"     ,       playback_next_audio},
+    {"<"     ,       playback_prev_audio}
 };
+
 
 static const int kbds_len = sizeof(keybindings) / sizeof(struct keybinding);
 
@@ -146,6 +150,7 @@ inline void playback_stop(PlayBackState *state){
     // state->looping = 0;
     pthread_cond_broadcast(&state->wait_cond);
   pthread_mutex_unlock(&state->lock);
+  KeepPlayingDirectory = false;
 }
 
 // =================================================================
@@ -240,49 +245,93 @@ inline void volume_decrease(PlayBackState *state){
 }
 // ===================================================================
 
-void shuffle(const char *path, uint loop){
-
-  // init dir reader
-  DIR *dir = opendir(path);
-  struct dirent *entry;
-
-  // 2. count files in path
-  int count = 0;
-  srand(time(NULL));
-
-  if (!dir ) goto free;
-
-  while ((entry = readdir(dir)) != NULL ){
-    if (strcmp(".", entry->d_name) == 0 || strcmp("..", entry->d_name) == 0) 
-      continue;
-
-    count++;
-  }
-
-  if (count == 0) goto free;
-
-  // 2. get random index
-  int index_rand = rand() % count;
-
-  // 3. enter playback_run by random index file
-  rewinddir(dir);
-
-  for (int i = 0; i <= index_rand; i++){
-    entry = readdir(dir);
-    if (strcmp(".", entry->d_name) == 0 || strcmp("..", entry->d_name) == 0) continue;
-    if (i == index_rand){
-      char filename[512];
-      snprintf(filename, sizeof(filename), "%s/%s", path, entry->d_name);
-      playback_run(filename, loop);
-      break;
-    }
-  }
-
-  // find a better control flow.. you're running the die function on end.
-  closedir(dir); 
-  return;
-free:
-  closedir(dir);
-  die("FILE: %s",strerror(errno));
+void change_Audio(PlayBackState *state){
+    pthread_mutex_lock(&state->lock);
+    state->running = 0;
+    state->paused = 0;
+    pthread_cond_broadcast(&state->wait_cond);
+    pthread_mutex_unlock(&state->lock);
+    
+    // Note: KeepPlayingDirectory stays 1 (true) by default, 
+    // so utils.c knows to play the next file
+}
+void loop_toggle(PlayBackState *state) {
+    if (state->looping) loop_false(state);
+    else loop_true(state);
 }
 
+inline void loop_true(PlayBackState *state){
+  pthread_mutex_lock(&state->lock);
+  state->looping = true;
+  DirFiles.DirLoopStop = false;
+  pthread_cond_broadcast(&state->wait_cond);
+  pthread_mutex_unlock(&state->lock);
+}
+
+inline void loop_false(PlayBackState *state){
+  pthread_mutex_lock(&state->lock);
+    state->looping = false;
+    DirFiles.DirLoopStop = true;
+  pthread_mutex_unlock(&state->lock);
+}
+
+void shuffle_toggle(PlayBackState *state) {
+    if (DirFiles.shuffle) shuffle_false(state);
+    else shuffle_true(state);
+}
+
+inline void shuffle_true(PlayBackState *state){
+  pthread_mutex_lock(&state->lock);
+  // state->shuffle = true;
+  DirFiles.shuffle = true;
+  pthread_cond_broadcast(&state->wait_cond);
+  pthread_mutex_unlock(&state->lock);
+}
+
+inline void shuffle_false(PlayBackState *state){
+  pthread_mutex_lock(&state->lock);
+    // state->shuffle = false;
+    DirFiles.shuffle = false;
+  pthread_mutex_unlock(&state->lock);
+}
+
+void stopAndShuffle(PlayBackState* state){
+  shuffle(); 
+  change_Audio(state);
+}
+
+void shuffle(){
+  srand(time(NULL));
+  if(DirFiles.totalFiles > 0)
+    DirFiles.currentFile = rand() % (DirFiles.totalFiles);
+}
+
+void next(PlayBackState *state){
+  DirFiles.currentFile++;
+  if (DirFiles.currentFile >= DirFiles.totalFiles)
+    DirFiles.currentFile = 0; 
+    
+  change_Audio(state); 
+}
+
+void prev(PlayBackState *state){
+  DirFiles.currentFile--;
+  if (DirFiles.currentFile < 0)
+    DirFiles.currentFile = DirFiles.totalFiles-1; 
+
+  change_Audio(state); 
+}
+
+inline void playback_next_audio(PlayBackState *state){
+  if(DirFiles.shuffle)
+    stopAndShuffle(state);
+  else 
+    next(state);
+}
+
+inline void playback_prev_audio(PlayBackState *state){
+  if(DirFiles.shuffle)
+    stopAndShuffle(state);
+  else
+   prev(state);
+}
