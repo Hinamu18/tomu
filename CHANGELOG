@@ -1,3 +1,9 @@
+## A: Gfed 0.0.11_dirty - 2026-01-18
+- Support directory playback (load and play all files in a path)
+- Implement Shuffle and Loop toggles (keys: 's', 'l')
+- Add Next/Previous track controls (keys: '<', '>')
+- Display Shuffle/Loop status in the progress bar
+- Refactor file handling logic (extractDir and dirFiles struct) 
 ## A: 6z7y 0.0.10_dirty - 2026-01-16
 - Support playback speed
 - rebuild source logical improve
